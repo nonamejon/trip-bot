@@ -29,7 +29,9 @@ MOCK_MIRROR = "true"
 # Mock agent only: minutes before the mock agent answers.
 MOCK_DELAY_MIN = "2"
 
-GEMINI_MODEL = "gemini-2.5-flash"
+GEMINI_MODEL = "gemini-3.7-flash"
+# Used when the main model is overloaded or slow.
+GEMINI_FALLBACK_MODEL = "gemini-3.5-flash"
 
 # Timing rules (minutes). Lower them while testing.
 AGENT_SLA_MIN = "240"   # agent should answer within this; then the bot reminds the agent

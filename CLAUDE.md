@@ -52,7 +52,7 @@ any open state -> cancelled
 ## Cloudflare state (live, in the user's account)
 
 - D1 `trip-bot`, id `a6b9448f-7127-4913-9ea5-bc786dddc799`, region EEUR. All tables from `schema.sql` are created and empty.
-- No Worker has been deployed yet.
+- Worker `trip-bot` deployed at https://trip-bot.zsayidfozil.workers.dev; secrets set; webhook set (bot `@trip_t_est_bot`). The deploy API token has no D1 permission; query D1 through the Cloudflare connector.
 
 ## Next steps, in order
 
@@ -65,7 +65,7 @@ any open state -> cancelled
    npx wrangler secret put WEBHOOK_SECRET    # random letters and digits
    npx wrangler secret put PASSPORT_KEY      # openssl rand -base64 32
    ```
-4. Check that `GEMINI_MODEL` in `wrangler.toml` (`gemini-2.5-flash`) is still a current model name. Update it if it was retired.
+4. `GEMINI_MODEL` is `gemini-3.7-flash`, with `GEMINI_FALLBACK_MODEL` `gemini-3.5-flash` used when the main model returns 429/5xx or takes over 14 s.
 5. `npx wrangler deploy`
 6. Open `https://trip-bot.<subdomain>.workers.dev/setup?key=<WEBHOOK_SECRET>`. This sets the webhook and the bot's command list.
 7. Message the bot. It replies with the sender's Telegram ID. Put it in `OWNER_ID` and `ADMIN_ID` and redeploy.

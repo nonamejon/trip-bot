@@ -22,18 +22,22 @@ class Stmt {
 const env = {
   DB: { prepare: (s) => new Stmt(s) },
   OWNER_ID: '111', ADMIN_ID: '111', AGENT_MODE: 'mock', MOCK_MIRROR: 'true', MOCK_DELAY_MIN: '2',
-  GEMINI_MODEL: 'gemini-2.5-flash', AGENT_SLA_MIN: '240', NUDGE_MIN: '120', TZ_OFFSET_MIN: '300',
+  GEMINI_MODEL: 'gemini-3.7-flash', GEMINI_FALLBACK_MODEL: 'gemini-3.5-flash', AGENT_SLA_MIN: '240', NUDGE_MIN: '120', TZ_OFFSET_MIN: '300',
   TELEGRAM_TOKEN: 'TOKEN', GEMINI_API_KEY: 'KEY', WEBHOOK_SECRET: 'sec',
   PASSPORT_KEY: Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString('base64'),
 };
 
 // ---------- fake Telegram + Gemini ----------
-let msgId = 100, offersRound = 0;
+let msgId = 100, offersRound = 0, failNextGemini = false;
 const sent = [];
 const geminiCalls = [];
 globalThis.fetch = async (url, init = {}) => {
   url = String(url);
   if (url.includes('generativelanguage.googleapis.com')) {
+    if (failNextGemini && url.includes('gemini-3.7-flash')) {
+      failNextGemini = false; geminiCalls.push('503');
+      return new Response('{"error":{"code":503,"message":"high demand"}}', { status: 503 });
+    }
     const body = JSON.parse(init.body);
     const prompt = body.contents[0].parts[0].text;
     const hasMedia = body.contents[0].parts.length > 1;
@@ -156,8 +160,10 @@ NOW = Date.UTC(2026, 10, 16, 0, 0); await cron(); show('cron: trip over');
 assert(status().status === 'done', 'trip closed as done');
 
 // second trip: agent never answers -> SLA reminder; then owner cancels
+failNextGemini = true;
 await say('Istanbul again please, same as before'); show('second trip');
 const t2 = status().id;
+assert(geminiCalls.includes('503') && status().status === 'draft', 'main model 503 -> fallback model used');
 await tap(`ap:${t2}`);
 await say('/jobs');
 sqlite.prepare('UPDATE jobs SET done_at = 1 WHERE done_at IS NULL').run(); // agent goes silent

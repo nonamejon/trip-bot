@@ -6,19 +6,43 @@ export async function gemini(env, { prompt, media = [], schema = null, temperatu
   const parts = [{ text: prompt }, ...media.map((m) => ({ inline_data: { mime_type: m.mime, data: m.b64 } }))];
   const generationConfig = { temperature };
   if (schema) { generationConfig.responseMimeType = 'application/json'; generationConfig.responseSchema = schema; }
-  const model = env.GEMINI_MODEL || 'gemini-2.5-flash';
-  const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json', 'x-goog-api-key': env.GEMINI_API_KEY },
-    body: JSON.stringify({ contents: [{ role: 'user', parts }], generationConfig }),
-  });
-  if (!r.ok) throw new Error(`Gemini HTTP ${r.status}: ${(await r.text()).slice(0, 300)}`);
+  const body = JSON.stringify({ contents: [{ role: 'user', parts }], generationConfig });
+  const r = await callWithFallback(env, body);
   const j = await r.json();
   const text = (j.candidates?.[0]?.content?.parts || []).map((p) => p.text || '').join('').trim();
   if (!text) throw new Error('Gemini returned no text: ' + JSON.stringify(j).slice(0, 300));
   if (!schema) return text;
   try { return JSON.parse(text); }
   catch { throw new Error('Gemini returned invalid JSON: ' + text.slice(0, 300)); }
+}
+
+// Gemini models get overloaded (503) or slow. Try the main model with a time limit, then the fallback once.
+// Both together stay under the ~30 s a Worker gets for background work after answering Telegram.
+const RETRYABLE = new Set([429, 500, 502, 503, 504]);
+async function callWithFallback(env, body) {
+  const tries = [
+    [env.GEMINI_MODEL || 'gemini-3.7-flash', 14000],
+    [env.GEMINI_FALLBACK_MODEL || 'gemini-3.5-flash', 14000],
+  ];
+  let last;
+  for (const [model, ms] of tries) {
+    let r;
+    try {
+      r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'x-goog-api-key': env.GEMINI_API_KEY },
+        body,
+        signal: AbortSignal.timeout(ms),
+      });
+    } catch (e) {
+      last = new Error(`Gemini ${model} ${e.name === 'TimeoutError' ? 'timed out' : 'failed'}: ${e.message}`);
+      continue;
+    }
+    if (r.ok) return r;
+    last = new Error(`Gemini ${model} HTTP ${r.status}: ${(await r.text()).slice(0, 300)}`);
+    if (!RETRYABLE.has(r.status)) break;
+  }
+  throw last;
 }
 
 const S = (nullable = true) => ({ type: 'STRING', nullable });
