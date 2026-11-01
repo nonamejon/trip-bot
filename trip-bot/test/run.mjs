@@ -22,7 +22,7 @@ class Stmt {
 const env = {
   DB: { prepare: (s) => new Stmt(s) },
   OWNER_ID: '111', ADMIN_ID: '111', AGENT_MODE: 'mock', MOCK_MIRROR: 'true', MOCK_DELAY_MIN: '2',
-  GEMINI_MODEL: 'gemini-3.7-flash', GEMINI_FALLBACK_MODEL: 'gemini-3.5-flash', AGENT_SLA_MIN: '240', NUDGE_MIN: '120', TZ_OFFSET_MIN: '300',
+  GEMINI_MODEL: 'gemini-3.8-flash', GEMINI_FALLBACK_MODEL: 'gemini-3.5-flash,gemini-3.5-flash-lite', AGENT_SLA_MIN: '240', NUDGE_MIN: '120', TZ_OFFSET_MIN: '300',
   TELEGRAM_TOKEN: 'TOKEN', GEMINI_API_KEY: 'KEY', WEBHOOK_SECRET: 'sec',
   PASSPORT_KEY: Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString('base64'),
 };
@@ -34,7 +34,7 @@ const geminiCalls = [];
 globalThis.fetch = async (url, init = {}) => {
   url = String(url);
   if (url.includes('generativelanguage.googleapis.com')) {
-    if (failNextGemini && url.includes('gemini-3.7-flash')) {
+    if (failNextGemini && url.includes('gemini-3.8-flash')) {
       failNextGemini = false; geminiCalls.push('503');
       return new Response('{"error":{"code":503,"message":"high demand"}}', { status: 503 });
     }

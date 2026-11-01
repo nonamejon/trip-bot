@@ -65,10 +65,10 @@ any open state -> cancelled
    npx wrangler secret put WEBHOOK_SECRET    # random letters and digits
    npx wrangler secret put PASSPORT_KEY      # openssl rand -base64 32
    ```
-4. `GEMINI_MODEL` is `gemini-3.7-flash`, with `GEMINI_FALLBACK_MODEL` `gemini-3.5-flash` used when the main model returns 429/5xx or takes over 14 s.
+4. `GEMINI_MODEL` is `gemini-3.8-flash` (12 s limit), then `GEMINI_FALLBACK_MODEL` (`gemini-3.5-flash,gemini-3.5-flash-lite`, 8 s each) on 429/5xx or timeout. The key is on the free tier for now.
 5. `npx wrangler deploy`
 6. Open `https://trip-bot.<subdomain>.workers.dev/setup?key=<WEBHOOK_SECRET>`. This sets the webhook and the bot's command list.
-7. Message the bot. It replies with the sender's Telegram ID. Put it in `OWNER_ID` and `ADMIN_ID` and redeploy.
+7. Done: `OWNER_ID` and `ADMIN_ID` are `5503792899`.
 8. Test in mock mode:
    - Send a voice note in Uzbek and approve the card.
    - Send `/now` to make the mock agent answer immediately.
