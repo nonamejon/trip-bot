@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="uz">
+<head>
+<meta charset="utf-8">
+<title>Eslatma</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0}
+a{color:#1D4ED8}a:hover{color:#1E3A8A}
+.ph{width:390px;height:844px;box-sizing:border-box;display:flex;flex-direction:column;font-family:Inter,system-ui,sans-serif;background:#E9EDF1;color:#111827;overflow:hidden}
+.hd{height:60px;flex:none;display:flex;align-items:center;gap:12px;padding:0 16px;background:#FFFFFF;border-bottom:1px solid #D5DCE3}
+.av{width:38px;height:38px;border-radius:50%;background:#1D4ED8;color:#FFFFFF;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:14px}
+.nm{font-size:15px;font-weight:600;line-height:1.2}
+.sb{font-size:12px;color:#4B5563}
+.ch{flex:1;display:flex;flex-direction:column;gap:8px;padding:16px 12px;overflow:hidden}
+.b{align-self:flex-start;max-width:320px;box-sizing:border-box;background:#FFFFFF;border-radius:14px 14px 14px 4px;padding:10px 12px;font-size:14px;line-height:1.45}
+.u{align-self:flex-end;max-width:300px;box-sizing:border-box;background:#D7E6FF;border-radius:14px 14px 4px 14px;padding:10px 12px;font-size:14px;line-height:1.45}
+.tm{font-size:11px;color:#4B5563;text-align:right;margin-top:4px}
+.kb{align-self:flex-start;width:320px;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px}
+.k{min-height:44px;border:1px solid #C9D3DE;background:#FFFFFF;border-radius:10px;font:600 14px Inter,system-ui,sans-serif;color:#1D4ED8;padding:8px 10px;cursor:pointer}
+.k1{grid-column:1 / -1}
+.kp{background:#1D4ED8;border-color:#1D4ED8;color:#FFFFFF}
+.cp{height:60px;flex:none;display:flex;align-items:center;gap:10px;padding:0 12px;background:#FFFFFF;border-top:1px solid #D5DCE3}
+.in{flex:1;height:40px;border:1px solid #D5DCE3;border-radius:20px;padding:0 14px;font:14px Inter,system-ui,sans-serif;color:#111827;background:#F6F8FA}
+.mic{width:44px;height:44px;border-radius:50%;border:none;background:#1D4ED8;color:#FFFFFF;display:flex;align-items:center;justify-content:center;cursor:pointer}
+.dv{align-self:center;font-size:12px;color:#374151;background:#D5DCE3;border-radius:10px;padding:3px 10px}
+.rh{display:flex;align-items:center;gap:8px;margin-bottom:6px}
+.bell{width:30px;height:30px;border-radius:50%;background:#FFF1DB;color:#8A4B00;display:flex;align-items:center;justify-content:center;flex:none}
+.li{display:flex;gap:8px;font-size:13.5px;padding:3px 0}
+.li span:first-child{color:#4B5563;width:84px;flex:none}
+</style>
+</helmet>
+<div class="ph">
+<div class="hd">
+<div class="av">AY</div>
+<div style="display: flex; flex-direction: column; gap: 2px">
+<div class="nm">Shaxsiy yordamchi</div>
+<div class="sb">bot · onlayn</div>
+</div>
+</div>
+<div class="ch">
+<div class="dv">11 noyabr</div>
+<div class="b">
+<div class="rh"><div class="bell"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"></path><path d="M10 21h4"></path></svg></div><div style="font-weight: 700">Ertaga Istanbulga uchasiz</div></div>
+<div class="li"><span>Reys</span><span>12 noyabr, 07:40</span></div>
+<div class="li"><span>Aeroport</span><span>Toshkent, 2-terminal</span></div>
+<div class="li"><span>Bagaj</span><span>1 × 23 kg</span></div>
+<div style="margin-top: 6px">Onlayn ro'yxatdan o'tish ochildi. O'rindiqni hozir tanlash mumkin.</div>
+<div class="tm">07:40</div>
+</div>
+<div class="kb">
+<button type="button" class="k kp k1">Onlayn ro'yxatdan o'tish</button>
+<button type="button" class="k">Biletni ochish</button>
+<button type="button" class="k">Taksi buyurtma</button>
+</div>
+<div class="u">Oyna yonidagi o'rindiq kerak<div class="tm">07:52</div></div>
+<div class="b">Agentga yubordim. O'rindiq tasdiqlangach xabar beraman. Ertaga 04:40 da aeroportga chiqish haqida yana eslataman.<div class="tm">07:52</div></div>
+</div>
+<div class="cp">
+<input class="in" type="text" aria-label="Xabar" placeholder="Xabar yozing...">
+<button type="button" class="mic" aria-label="Ovozli xabar yozish"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3"></rect><path d="M5 11a7 7 0 0 0 14 0"></path><path d="M12 18v3"></path></svg></button>
+</div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":390,"height":844}}'>
+class Component extends DCLogic {
+renderVals() {
+return {};
+}
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,13 @@
+{
+  "name": "trip-bot",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "deploy": "wrangler deploy",
+    "test": "node test/run.mjs"
+  },
+  "devDependencies": {
+    "better-sqlite3": "^11.0.0",
+    "wrangler": "^4.0.0"
+  }
+}

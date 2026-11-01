@@ -1,0 +1,42 @@
+name = "trip-bot"
+main = "src/index.js"
+compatibility_date = "2025-06-01"
+
+# Runs every minute: mock agent replies, agent-late reminders, flight reminders, closing finished trips.
+[triggers]
+crons = ["* * * * *"]
+
+[[d1_databases]]
+binding = "DB"
+database_name = "trip-bot"
+database_id = "a6b9448f-7127-4913-9ea5-bc786dddc799"
+
+[vars]
+# Telegram user id of the person the bot works for (Azizbek, or you while testing).
+# Message the bot once without it set: it replies with your id.
+OWNER_ID = ""
+# Telegram user id that gets error alerts and admin commands. Can be the same as OWNER_ID.
+ADMIN_ID = ""
+
+# "mock" = a fake travel agent answers automatically (for testing alone).
+# "group" = a real Telegram group; set AGENT_CHAT_ID and add the bot to that group.
+AGENT_MODE = "mock"
+AGENT_CHAT_ID = ""
+# "true" if the agent group has Topics turned on and the bot is an admin there: one topic per trip.
+AGENT_TOPICS = "false"
+# Mock agent only: show the agent-group conversation inside your own chat so you can follow it.
+MOCK_MIRROR = "true"
+# Mock agent only: minutes before the mock agent answers.
+MOCK_DELAY_MIN = "2"
+
+GEMINI_MODEL = "gemini-2.5-flash"
+
+# Timing rules (minutes). Lower them while testing.
+AGENT_SLA_MIN = "240"   # agent should answer within this; then the bot reminds the agent
+NUDGE_MIN = "120"       # unapproved request or unchosen options: remind the owner after this
+
+# Local time of the owner, minutes from UTC (Tashkent = 300).
+TZ_OFFSET_MIN = "300"
+
+# Secrets (set with `npx wrangler secret put NAME`, never put them here):
+# TELEGRAM_TOKEN, GEMINI_API_KEY, WEBHOOK_SECRET, PASSPORT_KEY

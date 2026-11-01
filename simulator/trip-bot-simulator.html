@@ -1,0 +1,718 @@
+<title>Trip Bot Simulator</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+/* Layout: control bar on top, then three working panes side by side: Azizbek's chat, the agent group, and what the Worker does behind the scenes. */
+:root{
+  --bg:#EDF0F3; --panel:#FFFFFF; --ink:#16202B; --muted:#56616E; --line:#D5DBE2;
+  --accent:#2160C4; --accent-ink:#FFFFFF; --accent-soft:#E2EBF9;
+  --chat:#DCE3EA; --in:#FFFFFF; --out:#D2E3FA; --agent:#0D7A63; --agent-soft:#DDF2EC;
+  --ok:#11703F; --ok-soft:#DFF3E7; --warn:#8F5200; --warn-soft:#FFF0D9; --crit:#B42318; --crit-soft:#FDE6E3;
+  --code:#F3F5F8;
+  --sans:'IBM Plex Sans',system-ui,-apple-system,'Segoe UI',sans-serif;
+  --mono:'IBM Plex Mono',ui-monospace,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --bg:#0E1318; --panel:#161D25; --ink:#E5EAF0; --muted:#9BA7B4; --line:#2A3440;
+  --accent:#6E9FEF; --accent-ink:#0E1318; --accent-soft:#1D2B41;
+  --chat:#0A0F14; --in:#1C2530; --out:#22375A; --agent:#46C5A4; --agent-soft:#15302A;
+  --ok:#52C88E; --ok-soft:#14301F; --warn:#EDB062; --warn-soft:#3A2B14; --crit:#F2826F; --crit-soft:#3A1C18;
+  --code:#111820; color-scheme:dark;
+}}
+:root[data-theme="dark"]{
+  --bg:#0E1318; --panel:#161D25; --ink:#E5EAF0; --muted:#9BA7B4; --line:#2A3440;
+  --accent:#6E9FEF; --accent-ink:#0E1318; --accent-soft:#1D2B41;
+  --chat:#0A0F14; --in:#1C2530; --out:#22375A; --agent:#46C5A4; --agent-soft:#15302A;
+  --ok:#52C88E; --ok-soft:#14301F; --warn:#EDB062; --warn-soft:#3A2B14; --crit:#F2826F; --crit-soft:#3A1C18;
+  --code:#111820; color-scheme:dark;
+}
+*{box-sizing:border-box}
+body{background:var(--bg);color:var(--ink);font-family:var(--sans);font-size:14px;line-height:1.45}
+button,input{font:inherit;color:inherit}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.wrap{max-width:1480px;margin:0 auto;padding-block:16px 32px;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));display:flex;flex-direction:column;gap:14px}
+header.top{display:flex;flex-wrap:wrap;align-items:center;gap:12px 20px}
+.brand{display:flex;flex-direction:column;gap:2px;min-width:0;flex:1 1 280px}
+.brand h1{margin:0;font-size:20px;font-weight:700;letter-spacing:-0.01em;text-wrap:balance}
+.brand p{margin:0;color:var(--muted);font-size:13px}
+.ctl{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+.clock{display:flex;flex-direction:column;padding:6px 12px;border:1px solid var(--line);border-radius:10px;background:var(--panel);min-width:150px}
+.clock small{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:0.06em}
+.clock b{font-family:var(--mono);font-weight:500;font-size:14px;font-variant-numeric:tabular-nums}
+.btn{min-height:36px;padding:6px 12px;border:1px solid var(--line);background:var(--panel);border-radius:8px;cursor:pointer;font-weight:500;font-size:13px}
+.btn:hover{border-color:var(--accent)}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:var(--accent-ink)}
+.btn:disabled{opacity:.5;cursor:default}
+.mode{font-size:12px;font-weight:600;padding:4px 10px;border-radius:999px;border:1px solid var(--line);background:var(--panel)}
+.mode.live{color:var(--ok);background:var(--ok-soft);border-color:transparent}
+.mode.off{color:var(--warn);background:var(--warn-soft);border-color:transparent}
+
+.grid{display:grid;grid-template-columns:minmax(0,380px) minmax(0,380px) minmax(0,1fr);gap:14px;align-items:start}
+@media (max-width:1180px){.grid{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}.grid .side{grid-column:1 / -1}}
+@media (max-width:760px){.grid{grid-template-columns:minmax(0,1fr)}}
+
+.pane{background:var(--panel);border:1px solid var(--line);border-radius:14px;display:flex;flex-direction:column;min-width:0;overflow:hidden}
+.phead{display:flex;align-items:center;gap:10px;padding:10px 14px;border-bottom:1px solid var(--line)}
+.av{width:36px;height:36px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:13px;flex:none;color:#FFFFFF}
+.phead .t{font-weight:600;line-height:1.2}
+.phead .s{font-size:12px;color:var(--muted)}
+.role{margin-left:auto;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.06em;color:var(--muted)}
+.chat{height:560px;overflow-y:auto;background:var(--chat);padding:12px 10px;display:flex;flex-direction:column;gap:8px}
+.msg{display:flex;flex-direction:column;gap:6px;max-width:88%}
+.msg.l{align-self:flex-start}
+.msg.r{align-self:flex-end;align-items:flex-end}
+.bub{background:var(--in);border-radius:12px 12px 12px 4px;padding:8px 11px;white-space:pre-line;overflow-wrap:anywhere;min-width:0}
+.msg.r .bub{background:var(--out);border-radius:12px 12px 4px 12px}
+.agentchat .msg.r .bub{background:var(--agent-soft)}
+.who{font-size:11.5px;font-weight:700;margin-bottom:2px}
+.tm{font-size:10.5px;color:var(--muted);text-align:right;margin-top:3px;font-variant-numeric:tabular-nums}
+.sys{align-self:center;font-size:11.5px;color:var(--muted);background:var(--panel);border:1px solid var(--line);border-radius:999px;padding:2px 10px;text-align:center}
+.kb{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:5px;width:100%;min-width:260px}
+.kb .k{min-height:38px;border:1px solid var(--line);background:var(--in);border-radius:8px;padding:6px 8px;cursor:pointer;font-weight:600;font-size:13px;color:var(--accent)}
+.kb .k.full{grid-column:1 / -1}
+.kb .k.pri{background:var(--accent);border-color:var(--accent);color:var(--accent-ink)}
+.kb .k.danger{color:var(--crit)}
+.kb .k:disabled{opacity:.45;cursor:default}
+.typing{align-self:flex-start;font-size:12px;color:var(--muted);padding:2px 6px}
+.voice{display:flex;align-items:center;gap:8px}
+.wave{display:flex;align-items:center;gap:2px;height:22px}
+.wave i{display:block;width:3px;border-radius:2px;background:var(--accent)}
+.trans{font-size:12.5px;color:var(--muted);border-top:1px solid var(--line);margin-top:6px;padding-top:6px}
+.card{display:flex;flex-direction:column;gap:2px;white-space:normal}
+.card h4{margin:0 0 4px;font-size:14px;display:flex;justify-content:space-between;gap:8px;align-items:center}
+.chip{font-size:11px;font-weight:600;border-radius:6px;padding:1px 6px;background:var(--accent-soft);color:var(--accent);white-space:nowrap}
+.chip.ok{background:var(--ok-soft);color:var(--ok)}
+.chip.warn{background:var(--warn-soft);color:var(--warn)}
+.chip.crit{background:var(--crit-soft);color:var(--crit)}
+.kv{display:grid;grid-template-columns:86px minmax(0,1fr);gap:6px;padding:4px 0;border-top:1px solid var(--line);font-size:13px}
+.kv span:first-child{color:var(--muted)}
+.offer{border:1px solid var(--line);border-radius:10px;padding:8px 10px;display:flex;flex-direction:column;gap:3px;font-size:13px;margin-top:6px}
+.offer.rec{border:2px solid var(--accent)}
+.offer .top{display:flex;justify-content:space-between;align-items:center;gap:6px;font-weight:700}
+.offer .ln{color:var(--ink)}
+.offer .ln b{color:var(--muted);font-weight:500;margin-right:4px}
+.reason{font-size:12.5px;background:var(--accent-soft);color:var(--ink);border-radius:8px;padding:6px 8px;margin-top:6px}
+.tpl{font-family:var(--mono);font-size:12px;background:var(--code);border-radius:8px;padding:8px;white-space:pre-wrap}
+.file{display:flex;gap:8px;align-items:center;font-size:13px;padding:5px 0}
+.file i{width:26px;height:30px;border-radius:5px;background:var(--accent-soft);flex:none;display:flex;align-items:center;justify-content:center;font-style:normal;font-size:9px;font-weight:700;color:var(--accent)}
+.steps{display:flex;flex-direction:column;gap:3px;font-size:13px;margin-top:4px}
+.steps div{display:flex;gap:6px}
+.steps .d{color:var(--ok);font-weight:700;width:14px}
+.steps .n{color:var(--muted);width:14px}
+.steps .c{color:var(--accent);font-weight:700;width:14px}
+
+.compose{border-top:1px solid var(--line);padding:8px;display:flex;flex-direction:column;gap:8px}
+.row{display:flex;gap:6px}
+.row input{flex:1;min-width:0;height:40px;border:1px solid var(--line);background:var(--bg);border-radius:20px;padding:0 14px}
+.send{width:40px;height:40px;border-radius:50%;border:none;background:var(--accent);color:var(--accent-ink);cursor:pointer;display:flex;align-items:center;justify-content:center;flex:none}
+.send:disabled{opacity:.5;cursor:default}
+.tests{display:flex;flex-direction:column;gap:5px}
+.tests .lbl{font-size:10.5px;font-weight:600;letter-spacing:0.07em;text-transform:uppercase;color:var(--muted)}
+.tests .chips{display:flex;flex-wrap:wrap;gap:5px}
+.tchip{border:1px dashed var(--line);background:transparent;border-radius:8px;padding:4px 8px;font-size:12px;cursor:pointer;color:var(--ink);text-align:left}
+.tchip:hover{border-color:var(--accent);color:var(--accent)}
+.tchip:disabled{opacity:.45;cursor:default}
+
+.side .tabs{display:flex;gap:4px;padding:8px 10px 0;border-bottom:1px solid var(--line);flex-wrap:wrap}
+.tab{border:none;background:transparent;padding:8px 12px;cursor:pointer;font-weight:600;font-size:13px;color:var(--muted);border-bottom:2px solid transparent}
+.tab[aria-selected="true"]{color:var(--ink);border-bottom-color:var(--accent)}
+.stats{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:1px;background:var(--line);border-bottom:1px solid var(--line)}
+.stat{background:var(--panel);padding:8px 12px;display:flex;flex-direction:column}
+.stat b{font-size:20px;font-variant-numeric:tabular-nums;line-height:1.2}
+.stat span{font-size:11.5px;color:var(--muted)}
+@media (max-width:520px){.stats{grid-template-columns:repeat(2,minmax(0,1fr))}}
+.body{height:560px;overflow-y:auto;padding:10px 14px}
+.log{display:flex;flex-direction:column;gap:6px}
+.ev{display:grid;grid-template-columns:44px 74px minmax(0,1fr);gap:8px;font-size:12.5px;align-items:start}
+.ev .when{font-family:var(--mono);color:var(--muted);font-variant-numeric:tabular-nums;font-size:12px}
+.tag{font-size:10.5px;font-weight:700;letter-spacing:0.05em;text-transform:uppercase;border-radius:5px;padding:1px 6px;text-align:center}
+.tag.telegram{background:var(--accent-soft);color:var(--accent)}
+.tag.ai{background:#EFE6FB;color:#6A35B8}
+.tag.db{background:var(--agent-soft);color:var(--agent)}
+.tag.cron{background:var(--warn-soft);color:var(--warn)}
+.tag.note{background:var(--code);color:var(--muted)}
+:root[data-theme="dark"] .tag.ai{background:#2B2140;color:#C3A6F2}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]) .tag.ai{background:#2B2140;color:#C3A6F2}}
+.ev details{margin-top:3px}
+.ev summary{cursor:pointer;color:var(--muted);font-size:12px}
+pre{margin:4px 0 0;font-family:var(--mono);font-size:11.5px;background:var(--code);border-radius:8px;padding:8px;white-space:pre-wrap;overflow-wrap:anywhere;max-height:260px;overflow:auto}
+.dbsec{display:flex;flex-direction:column;gap:4px;margin-bottom:14px}
+.dbsec h3{margin:0;font-size:13px;font-family:var(--mono);font-weight:500}
+.dbsec p{margin:0;font-size:12.5px;color:var(--muted)}
+.map{display:flex;flex-direction:column;gap:12px;max-width:68ch}
+.map h3{margin:6px 0 0;font-size:14px}
+.map p,.map li{margin:0;font-size:13.5px}
+.map ol,.map ul{margin:0;padding-left:20px;display:flex;flex-direction:column;gap:4px}
+.comp{display:grid;grid-template-columns:120px minmax(0,1fr);gap:6px 12px;font-size:13px}
+.comp b{font-weight:600}
+@media (prefers-reduced-motion: reduce){*{scroll-behavior:auto!important}}
+</style>
+
+<div class="wrap">
+  <header class="top">
+    <div class="brand">
+      <h1>Trip Bot Simulator</h1>
+      <p>Play Azizbek and the travel agent. Watch what the bot does, stores and sends at every step. Nothing leaves this page.</p>
+    </div>
+    <div class="ctl">
+      <div class="clock"><small>Simulated time</small><b id="clock">—</b></div>
+      <button class="btn" id="t1" type="button">+1 hour</button>
+      <button class="btn" id="t4" type="button">+4 hours</button>
+      <button class="btn" id="t24" type="button">+1 day</button>
+      <button class="btn primary" id="tnext" type="button">Skip to next event</button>
+      <button class="btn" id="reset" type="button">Reset</button>
+      <span class="mode" id="mode">Checking AI…</span>
+    </div>
+  </header>
+
+  <div class="grid">
+    <section class="pane" aria-label="Azizbek's chat with the bot">
+      <div class="phead">
+        <div class="av" style="background:#2160C4">AY</div>
+        <div><div class="t">Trip Assistant</div><div class="s">bot · Azizbek's private chat</div></div>
+        <div class="role">You are Azizbek</div>
+      </div>
+      <div class="chat ownerchat" id="ownerChat"></div>
+      <form class="compose" id="ownerForm">
+        <div class="row">
+          <input id="ownerInput" type="text" autocomplete="off" aria-label="Message as Azizbek" placeholder="Write as Azizbek…">
+          <button class="send" id="ownerSend" type="submit" aria-label="Send as Azizbek"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 12l16-8-6 16-2.5-6.5z"/></svg></button>
+        </div>
+        <div class="tests"><span class="lbl">Test inputs</span><div class="chips" id="ownerTests"></div></div>
+      </form>
+    </section>
+
+    <section class="pane" aria-label="Travel agent group">
+      <div class="phead">
+        <div class="av" style="background:#0D7A63">TA</div>
+        <div><div class="t">Trips · Azizbek</div><div class="s" id="agentSub">group · bot + travel agent</div></div>
+        <div class="role">You are the agent</div>
+      </div>
+      <div class="chat agentchat" id="agentChat"></div>
+      <form class="compose" id="agentForm">
+        <div class="row">
+          <input id="agentInput" type="text" autocomplete="off" aria-label="Message as the travel agent" placeholder="Reply as the agent…">
+          <button class="send" id="agentSend" type="submit" aria-label="Send as the agent"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 12l16-8-6 16-2.5-6.5z"/></svg></button>
+        </div>
+        <div class="tests"><span class="lbl">Test inputs</span><div class="chips" id="agentTests"></div></div>
+      </form>
+    </section>
+
+    <section class="pane side" aria-label="Behind the scenes">
+      <div class="phead">
+        <div class="av" style="background:#56616E">CF</div>
+        <div><div class="t">Behind the scenes</div><div class="s">what the Cloudflare Worker does</div></div>
+      </div>
+      <div class="stats">
+        <div class="stat"><b id="sAi">0</b><span>AI calls</span></div>
+        <div class="stat"><b id="sTg">0</b><span>Telegram sends</span></div>
+        <div class="stat"><b id="sDb">0</b><span>Database writes</span></div>
+        <div class="stat"><b id="sCron">0</b><span>Cron actions</span></div>
+      </div>
+      <div class="tabs" role="tablist">
+        <button class="tab" role="tab" type="button" id="tabLog" aria-selected="true">Activity</button>
+        <button class="tab" role="tab" type="button" id="tabDb" aria-selected="false">Database</button>
+        <button class="tab" role="tab" type="button" id="tabMap" aria-selected="false">How to test</button>
+      </div>
+      <div class="body" id="sideBody"></div>
+    </section>
+  </div>
+</div>
+
+<script>
+(function(){
+'use strict';
+const HOUR=3600e3, DAY=24*HOUR;
+const START=Date.UTC(2026,10,2,9,0);
+const REQUIRED=['destination','date_from','date_to','travelers'];
+const LABEL={destination:'destination',date_from:'departure date',date_to:'return date',travelers:'number of travelers'};
+let sample=null, aiMode='checking', tab='log', mid=0;
+let S;
+
+function fresh(){
+  S={now:START,trip:null,history:[],seq:0,owner:[],agent:[],log:[],ai:0,tg:0,db:0,cron:0,busyOwner:false,busyAgent:false,traveler:{name:'Azizbek',passport_enc:'v1:AES-GCM:3f9a…c21e (encrypted, key stored as a Worker secret)'}};
+}
+
+/* ---------- helpers ---------- */
+function h(tag,props,...kids){const el=document.createElement(tag);if(props)for(const k in props){const v=props[k];if(v==null||v===false)continue;if(k==='class')el.className=v;else if(k==='text')el.textContent=v;else if(k.startsWith('on'))el.addEventListener(k.slice(2),v);else el.setAttribute(k,v===true?'':v);}for(const c of kids.flat()){if(c==null||c===false)continue;el.append(c.nodeType?c:document.createTextNode(String(c)));}return el;}
+const WD=['Sun','Mon','Tue','Wed','Thu','Fri','Sat'], MO=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+const p2=n=>String(n).padStart(2,'0');
+function fmt(ms){const d=new Date(ms);return WD[d.getUTCDay()]+' '+d.getUTCDate()+' '+MO[d.getUTCMonth()]+', '+p2(d.getUTCHours())+':'+p2(d.getUTCMinutes());}
+function hm(ms){const d=new Date(ms);return p2(d.getUTCHours())+':'+p2(d.getUTCMinutes());}
+function dshort(iso){if(!iso)return '?';const [y,m,d]=iso.slice(0,10).split('-').map(Number);return d+' '+MO[m-1];}
+function isoDate(ms){const d=new Date(ms);return d.getUTCFullYear()+'-'+p2(d.getUTCMonth()+1)+'-'+p2(d.getUTCDate());}
+function parseISO(iso){if(!iso||!/^\d{4}-\d{2}-\d{2}/.test(iso))return null;const [y,m,d]=iso.slice(0,10).split('-').map(Number);let H=0,M=0;const t=iso.slice(11,16);if(/^\d{2}:\d{2}$/.test(t)){H=+t.slice(0,2);M=+t.slice(3,5);}return Date.UTC(y,m-1,d,H,M);}
+function nights(a,b){const x=parseISO(a),y=parseISO(b);if(x==null||y==null)return null;return Math.round((y-x)/DAY);}
+function money(o){if(o.total_price==null)return 'price unknown';return Number(o.total_price).toLocaleString('en-US').replace(/,/g,' ')+' '+(o.currency||'USD');}
+function tid(n){return 'T-'+String(n).padStart(4,'0');}
+
+/* ---------- log ---------- */
+function log(kind,text,detail){S.log.push({t:S.now,kind,text,detail});if(kind==='db')S.db++;if(kind==='cron')S.cron++;renderSide();}
+
+/* ---------- chat ---------- */
+function say(chat,m){m.id=++mid;m.t=S.now;S[chat].push(m);if(m.from==='bot'){S.tg++;}render(chat);renderStats();return m;}
+function sys(chat,text){S[chat].push({id:++mid,t:S.now,from:'sys',text});render(chat);}
+
+/* ---------- AI ---------- */
+async function askAI(purpose,prompt,offline){
+  S.ai++;log('ai',purpose);renderStats();
+  if(aiMode==='live'&&sample){
+    try{const r=await sample.json(prompt,{modelTier:'quick'});if(r&&typeof r==='object'){log('ai','Got structured result',r);return r;}}
+    catch(e){
+      const hard=['not_granted','sampling_disabled','not_declared','capability_disabled','capability_removed'];
+      if(hard.includes(e&&e.code)){aiMode='offline';renderMode();log('note','Live AI is not available here ('+e.code+'). Switched to the built-in offline parser.');}
+      else log('note','AI call failed ('+((e&&e.code)||'error')+'). Used the offline parser for this step.');
+    }
+  }
+  const r=offline();log('ai','Result (offline parser)',r);return r;
+}
+
+const MONTHS=[['jan','yanvar','янв'],['feb','fevral','фев'],['mar','mart','мар'],['apr','aprel','апр'],['may','may','мая'],['jun','iyun','июн'],['jul','iyul','июл'],['aug','avgust','авг'],['sep','sentabr','сен'],['oct','oktabr','окт'],['nov','noyabr','ноя'],['dec','dekabr','дек']];
+const MRX='('+MONTHS.flat().join('|')+')[a-zа-я]*';
+function monthIdx(w){w=w.toLowerCase();for(let i=0;i<12;i++)if(MONTHS[i].some(x=>w.startsWith(x)))return i;return -1;}
+function yearFor(m){const cur=new Date(S.now).getUTCMonth();return m<cur?2027:2026;}
+const CITIES={istanbul:'Istanbul','стамбул':'Istanbul',dubai:'Dubai',dubay:'Dubai','дубай':'Dubai',moscow:'Moscow',moskva:'Moscow','москв':'Moscow',almaty:'Almaty','алмат':'Almaty',seoul:'Seoul','сеул':'Seoul',beijing:'Beijing',pekin:'Beijing',london:'London','лондон':'London',paris:'Paris','париж':'Paris',frankfurt:'Frankfurt',antalya:'Antalya','анталь':'Antalya',baku:'Baku','баку':'Baku',tbilisi:'Tbilisi','тбилис':'Tbilisi',riyadh:'Riyadh',jeddah:'Jeddah',delhi:'Delhi',singapore:'Singapore',kazan:'Kazan','казан':'Kazan',ankara:'Ankara',shanghai:'Shanghai',guangzhou:'Guangzhou'};
+
+function offlineReq(text,draft){
+  const s=text.toLowerCase(), f=Object.assign({},draft);
+  for(const k in CITIES){if(s.includes(k)){f.destination=CITIES[k];break;}}
+  let m=s.match(new RegExp('(\\d{1,2})\\s*(?:–|-|to|dan)\\s*(\\d{1,2})[\\s-]*'+MRX));
+  if(m){const mi=monthIdx(m[3]);if(mi>=0){const y=yearFor(mi);f.date_from=y+'-'+p2(mi+1)+'-'+p2(+m[1]);f.date_to=y+'-'+p2(mi+1)+'-'+p2(+m[2]);}}
+  else{m=s.match(new RegExp('(\\d{1,2})(?:st|nd|rd|th)?[\\s-]*'+MRX));if(m){const mi=monthIdx(m[2]);if(mi>=0){f.date_from=yearFor(mi)+'-'+p2(mi+1)+'-'+p2(+m[1]);}}
+    else{m=s.match(/\b(\d{1,2})\.(\d{1,2})\b/);if(m){const mi=+m[2]-1;f.date_from=yearFor(mi)+'-'+p2(mi+1)+'-'+p2(+m[1]);}}}
+  const len=s.match(/(\d+)\s*-?\s*(days?|kun|nights?|kecha|дн|дня|дней|ноч)/);
+  if(len&&f.date_from&&!f.date_to){f.date_to=isoDate(parseISO(f.date_from)+(+len[1])*DAY);}
+  if(/(only me|just me|myself|faqat men|faqat o'zim|o'zim boraman|yolg'iz|один|одна|я один|1 person|one person)/.test(s))f.travelers=1;
+  const tr=s.match(/(\d+)\s*(people|persons|kishi|человек|travel)/);if(tr)f.travelers=+tr[1];
+  if(/ertalab|morning|утр/.test(s))f.flight_pref=(f.flight_pref&&!/morning/.test(f.flight_pref)?f.flight_pref+', ':'')+'morning';
+  if(/kechqurun|evening|вечер/.test(s))f.flight_pref='evening';
+  if(/direct|to'g'ridan|прям/.test(s))f.flight_pref=(f.flight_pref?f.flight_pref+', ':'')+'direct';
+  const hs=text.split(/(?<=[.!?])\s+/).find(x=>/hotel|mehmonxona|отел|гостиниц/i.test(x));if(hs)f.hotel=hs.trim();
+  const bud=s.match(/(\d[\d\s]{2,7})\s*(usd|\$|dollar)/);if(bud)f.budget=bud[1].replace(/\s/g,'')+' USD';
+  if(!f.origin)f.origin='Tashkent';if(!f.baggage)f.baggage='1 x 23 kg';
+  const miss=REQUIRED.filter(k=>!f[k]);
+  f.missing=miss;f.question=miss.length?'Got it. To prepare the request I still need: '+miss.map(k=>LABEL[k]).join(', ')+'.':null;
+  return f;
+}
+
+function offlineOffers(text,trip){
+  const marks=[...text.matchAll(/(?:^|\n)\s*(?:(\d)\s*[).]|(?:variant|option|вариант)\s*(\d))/gi)];
+  const parts={};
+  marks.forEach((m,i)=>{const n=m[1]||m[2];const end=i+1<marks.length?marks[i+1].index:text.length;parts[n]=(parts[n]||'')+' '+text.slice(m.index,end);});
+  const offers=Object.keys(parts).sort().map(n=>{
+    const b=parts[n], low=b.toLowerCase();
+    const pr=b.match(/(\d[\d\s]{1,7}\d|\d+)\s*(usd|\$|eur|€|so'm|sum)/i);
+    const tm=b.match(/(\d{1,2}:\d{2})\s*(?:→|->|-|–)\s*(\d{1,2}:\d{2})/);
+    let refund='unknown';
+    if(/non-?refundable|qaytarilmaydi|невозвр/.test(low))refund='none';
+    else if(/penalty|jarima|штраф/.test(low))refund='penalty';
+    else if(/free cancel|full refund|bepul|бесплатн/.test(low))refund='full';
+    const air=b.replace(/^\s*(?:\d\s*[).]|(?:variant|option|вариант)\s*\d\s*[:.)-]?)/i,'').trim().split(',')[0];
+    const hot=b.match(/hotel\s+([^,.]+)/i);const dist=b.match(/(\d+\s*min[^,.]*)/i);
+    const via=low.match(/via (\w+)/);
+    return {label:'Option '+n,airline:air.slice(0,40),outbound:tm?tm[1]+' → '+tm[2]:null,outbound_datetime:tm&&trip.fields.date_from?trip.fields.date_from+'T'+p2(+tm[1].split(':')[0])+':'+tm[1].split(':')[1]:null,stops:/direct|to'g'ridan|прям/.test(low)?'direct':via?'1 stop via '+via[1][0].toUpperCase()+via[1].slice(1):null,hotel:hot?hot[1].trim():null,distance:dist?dist[1].trim():null,total_price:pr?+pr[1].replace(/\s/g,''):null,currency:pr?(/eur|€/i.test(pr[2])?'EUR':/so'm|sum/i.test(pr[2])?'UZS':'USD'):null,refund};
+  }).filter(o=>o.total_price!=null||o.outbound||o.hotel);
+  let rec=null,reason=null;
+  if(offers.length){
+    const good=offers.map((o,i)=>[o,i]).filter(([o])=>o.refund==='full'&&o.stops==='direct');
+    if(good.length){rec=good[0][1];reason='Direct flight and a full refund if plans change.';}
+    else{let best=0;offers.forEach((o,i)=>{if((o.total_price??1e12)<(offers[best].total_price??1e12))best=i;});rec=best;reason='Lowest total price.';}
+  }
+  return {offers,recommended:rec,reason};
+}
+
+function reqPrompt(text,draft){
+  return 'You are the parsing step of a Telegram travel assistant for one executive, Azizbek, based in Tashkent. Today is '+isoDate(S.now)+'. He writes in Uzbek, Russian or English, sometimes mixed, sometimes via a transcribed voice note.\n\n'
+  +'Current draft request (JSON, may be empty): '+JSON.stringify(draft)+'\n\nHis new message: """'+text+'"""\n\n'
+  +'Merge the message into the draft and reply with only one JSON object:\n'
+  +'{"origin": string (default "Tashkent"), "destination": string|null, "date_from": "YYYY-MM-DD"|null, "date_to": "YYYY-MM-DD"|null, "travelers": number|null, "traveler_names": string|null, "flight_pref": string|null, "baggage": string (default "1 x 23 kg"), "hotel": string|null (his hotel wishes, short), "budget": string|null, "notes": string|null, "question": string|null}\n'
+  +'Rules: keep draft values unless the message changes them. If he gives a length ("3 days", "3 kunga") compute date_to from date_from. Resolve relative dates ("next Monday") from today. Never invent a destination, dates or traveler count. "question" = one short friendly question, in the language of his message, asking for ALL still-missing required fields (destination, date_from, date_to, travelers) at once; null when none are missing. Write field values in English.';
+}
+function offersPrompt(t){
+  return 'You are the parsing step of a Telegram travel assistant. The travel agent is answering this request: '+JSON.stringify(t.fields)+'\n\nEverything the agent has written for this request so far (later messages may add details to earlier options):\n"""'+t.agentTexts.join('\n\n')+'"""\n\n'
+  +'Extract every option. Reply with only one JSON object:\n'
+  +'{"offers":[{"label":"Option 1","airline":string|null,"outbound":"short, e.g. 07:40 → 10:55"|null,"outbound_datetime":"YYYY-MM-DDTHH:MM"|null,"return":string|null,"stops":"direct"|"1 stop via X"|null,"hotel":"name and stars"|null,"distance":string|null,"total_price":number|null,"currency":string|null,"refund":"full"|"penalty"|"none"|"unknown","refund_note":string|null}],"recommended":index|null,"reason":string|null}\n'
+  +'Rules: use only what the agent wrote; unknown stays null or "unknown". "recommended" is the best fit for the request (wishes about flight time, hotel location, flexibility, then price); "reason" is one short English sentence. If the text holds no options at all, return {"offers":[]}.';
+}
+
+/* ---------- flow ---------- */
+function newTrip(){S.seq++;const t={id:tid(S.seq),status:'collecting',fields:{},offers:[],agentTexts:[],chosen:null,docs:[],reminders:[],createdAt:S.now};S.trip=t;log('db','INSERT trips '+t.id+' (status: collecting)');return t;}
+function setStatus(t,st){const from=t.status;t.status=st;log('db','UPDATE trips '+t.id+': '+from+' → '+st);}
+const CANCEL=/\b(cancel|bekor|отмен)/i, STATUS=/\b(status|holat|статус|qayerda|where is)/i;
+
+async function ownerSays(text,voice){
+  say('owner',{from:'user',text,voice});
+  log('telegram','Webhook in: '+(voice?'voice note':'text message')+' from Azizbek');
+  const t=S.trip;
+  if(t&&['sent','offers','chosen','booked'].includes(t.status)){
+    if(CANCEL.test(text))return askCancel();
+    if(STATUS.test(text))return sendStatus();
+    say('agent',{from:'bot',text:'Note from Azizbek about '+t.id+':\n"'+text+'"'});
+    log('telegram','Forwarded note to the agent topic');
+    say('owner',{from:'bot',text:'Passed this on to the agent.'});
+    return;
+  }
+  if(t&&t.status==='draft'&&CANCEL.test(text))return cancelTrip(true);
+  await buildRequest(text,voice);
+}
+
+async function buildRequest(text,voice){
+  let t=S.trip;if(!t||['cancelled','done'].includes(t.status))t=newTrip();
+  busy('owner',true);
+  const r=await askAI(voice?'Gemini: transcribe the voice note and pull out trip details (one call)':'Gemini: pull trip details out of the message',reqPrompt(text,t.fields),()=>offlineReq(text,t.fields));
+  busy('owner',false);
+  const keys=['origin','destination','date_from','date_to','travelers','traveler_names','flight_pref','baggage','hotel','budget','notes'];
+  for(const k of keys){if(r[k]!=null&&r[k]!==''){t.fields[k]=r[k];}}
+  if(t.fields.travelers!=null)t.fields.travelers=Number(t.fields.travelers)||t.fields.travelers;
+  ['date_from','date_to'].forEach(k=>{if(t.fields[k]&&parseISO(t.fields[k])==null)delete t.fields[k];});
+  if(!t.fields.origin)t.fields.origin='Tashkent';if(!t.fields.baggage)t.fields.baggage='1 x 23 kg';
+  const miss=REQUIRED.filter(k=>!t.fields[k]);
+  if(miss.length){
+    if(t.status!=='collecting')setStatus(t,'collecting');else log('db','UPDATE trips '+t.id+' (draft fields saved)');
+    const q=r.question||('To prepare the request I still need: '+miss.map(k=>LABEL[k]).join(', ')+'.');
+    say('owner',{from:'bot',text:q});
+    return;
+  }
+  setStatus(t,'draft');t.draftAt=S.now;t.nudged=false;
+  say('owner',{from:'bot',kind:'draft',tripId:t.id,buttons:[{label:'Approve and send to agent',act:'approve',cls:'pri full'},{label:'Edit',act:'edit'},{label:'Cancel',act:'cancelDraft',cls:'danger'}]});
+}
+
+function templateText(t){
+  const f=t.fields,n=nights(f.date_from,f.date_to);
+  return ['REQUEST #'+t.id,'Route: '+(f.origin||'Tashkent')+' → '+f.destination,'Dates: '+dshort(f.date_from)+' – '+dshort(f.date_to)+(n!=null?' ('+n+' nights)':''),'Travelers: '+f.travelers+(f.traveler_names?' ('+f.traveler_names+')':''),'Flight: '+(f.flight_pref||'no preference'),'Baggage: '+(f.baggage||'1 x 23 kg'),'Hotel: '+(f.hotel||'no preference'),'Budget: '+(f.budget||'not set'),'Please reply within 4 hours, one block per option.'].join('\n');
+}
+
+function approve(){
+  const t=S.trip;if(!t||t.status!=='draft')return;
+  setStatus(t,'sent');t.sentAt=S.now;t.dueAt=S.now+4*HOUR;t.slaReminded=false;t.clarifyAsked=false;
+  sys('agent','New topic: '+t.id+' · '+t.fields.destination);
+  say('agent',{from:'bot',kind:'template',text:templateText(t)});
+  log('telegram','Posted the request to the agent group (new topic for '+t.id+')');
+  say('owner',{from:'bot',text:'Sent to the agent. They usually answer within 4 hours. I will message you when the options arrive.'});
+}
+
+async function agentSays(text){
+  say('agent',{from:'agent',text});
+  log('telegram','Webhook in: message from the agent');
+  const t=S.trip;
+  if(!t||!['sent','offers','chosen','booked'].includes(t.status)){log('note','No open request is waiting on the agent. The bot ignores this message.');return;}
+  if(t.status==='chosen'||t.status==='booked'){say('owner',{from:'bot',text:'Message from the agent:\n"'+text+'"'});log('telegram','Forwarded the agent message to Azizbek');return;}
+  t.agentTexts.push(text);log('db','INSERT agent_messages ('+t.id+')');
+  busy('agent',true);busy('owner',true);
+  const r=await askAI("Gemini: read the agent's options and compare them",offersPrompt(t),()=>offlineOffers(t.agentTexts.join('\n\n'),t));
+  busy('agent',false);busy('owner',false);
+  const offers=Array.isArray(r.offers)?r.offers.slice(0,4):[];
+  if(!offers.length){
+    say('owner',{from:'bot',text:'The agent wrote about '+t.id+':\n"'+text+'"'});
+    log('telegram','No options found in that message; forwarded it to Azizbek as a note');return;
+  }
+  t.offers=offers;t.recommended=Number.isInteger(r.recommended)?r.recommended:null;t.reason=r.reason||null;
+  log('db','UPSERT offers for '+t.id+' ('+offers.length+' rows)');
+  const gaps=[];offers.forEach(o=>{const g=[];if(o.total_price==null)g.push('total price');if(!o.outbound)g.push('flight times');if(!o.refund||o.refund==='unknown')g.push('cancellation terms');if(g.length)gaps.push(o.label+': '+g.join(', '));});
+  if(gaps.length&&!t.clarifyAsked){
+    t.clarifyAsked=true;
+    say('agent',{from:'bot',text:'Thank you. Before I show these to Azizbek, please add:\n'+gaps.join('\n')});
+    log('telegram','Asked the agent to fill the gaps');
+    say('owner',{from:'bot',text:offers.length+' options for '+t.fields.destination+' are in. I asked the agent for one missing detail and will show them as soon as it arrives.'});
+    return;
+  }
+  if(t.status!=='offers')setStatus(t,'offers');t.offersAt=S.now;t.nudgedOffers=false;
+  const kb=offers.map((o,i)=>({label:'Choose '+o.label,act:'choose',arg:i,cls:i===t.recommended?'pri':''}));
+  kb.push({label:'Ask for other options',act:'other',cls:'full'});
+  say('owner',{from:'bot',kind:'compare',tripId:t.id,buttons:kb});
+}
+
+function choose(i){
+  const t=S.trip;if(!t||t.status!=='offers')return;const o=t.offers[i];if(!o)return;
+  t.chosen=i;setStatus(t,'chosen');
+  log('db','Decrypted passport for this one handoff; wrote an audit row');
+  say('agent',{from:'bot',text:'Azizbek chose '+o.label+' ('+money(o)+'). Please book it and upload the ticket and voucher here.'});
+  say('agent',{from:'bot',kind:'secure',text:'Passport details for '+t.id+'\nName: Azizbek\nPassport: [shown to the agent only]\nThis message is sent once, for this booking.'});
+  log('telegram','Sent the choice and passport details to the agent');
+  say('owner',{from:'bot',text:'Done. The agent is booking '+o.label+'. The ticket and voucher will appear here when ready.'});
+}
+
+function otherOptions(){
+  const t=S.trip;if(!t||t.status!=='offers')return;
+  setStatus(t,'sent');t.offers=[];t.agentTexts=[];t.clarifyAsked=false;t.sentAt=S.now;t.dueAt=S.now+4*HOUR;t.slaReminded=false;
+  log('db','DELETE offers for '+t.id);
+  say('agent',{from:'bot',text:'Azizbek would like other options for '+t.id+'. Same request as above, please.'});
+  say('owner',{from:'bot',text:'Asked the agent for other options.'});
+}
+
+function uploadDocs(){
+  const t=S.trip;if(!t||t.status!=='chosen')return;
+  const files=['E-ticket_'+t.id+'.pdf','Hotel_voucher_'+t.id+'.pdf'];
+  say('agent',{from:'agent',kind:'files',files});
+  log('telegram','Webhook in: 2 files from the agent');
+  t.docs=files.map(n=>({name:n,file_id:'BQACAgIAAxkB'+Math.random().toString(36).slice(2,10)}));
+  log('db','INSERT documents ('+t.docs.length+' rows, only Telegram file_ids are stored)');
+  setStatus(t,'booked');
+  const o=t.offers[t.chosen]||{};
+  let fl=parseISO(o.outbound_datetime);if(fl==null){fl=parseISO(t.fields.date_from);if(fl!=null)fl+=7*HOUR+40*60e3;}
+  t.flightAt=fl;
+  const back=parseISO(t.fields.date_to);t.doneAt=back!=null?back+DAY-60e3:null;
+  if(fl!=null){
+    t.reminders=[{type:'check-in',at:fl-DAY,sent:false},{type:'leave for airport',at:fl-3*HOUR,sent:false}];
+    t.reminders.forEach(r=>{if(r.at<=S.now){r.sent=true;r.skipped=true;}});
+    log('db','INSERT reminders ('+t.reminders.filter(r=>!r.skipped).length+' rows)');
+  }
+  say('owner',{from:'bot',kind:'trip',tripId:t.id,buttons:[{label:'Open ticket',act:'openDoc',arg:0},{label:'Open voucher',act:'openDoc',arg:1}],keep:true});
+  say('agent',{from:'bot',text:'Received, thank you. Sent to Azizbek.'});
+}
+
+function askCancel(){
+  const t=S.trip;if(!t)return;
+  const o=t.offers&&t.chosen!=null?t.offers[t.chosen]:null;
+  let txt='Cancel trip '+t.id+' to '+t.fields.destination+'?';
+  if(o&&(t.status==='booked'||t.status==='chosen'))txt+='\nCancellation terms for '+o.label+': '+refundWord(o.refund)+(o.refund_note?' ('+o.refund_note+')':'')+'.';
+  say('owner',{from:'bot',text:txt,buttons:[{label:'Yes, cancel',act:'cancelYes',cls:'danger'},{label:'Keep it',act:'cancelNo'}]});
+}
+function cancelTrip(direct){
+  const t=S.trip;if(!t)return;
+  const wasWithAgent=['sent','offers','chosen','booked'].includes(t.status);
+  setStatus(t,'cancelled');
+  if(wasWithAgent){say('agent',{from:'bot',text:'Azizbek cancelled '+t.id+'. Please cancel any bookings made for it and confirm here.'});}
+  say('owner',{from:'bot',text:'Trip '+t.id+' is cancelled.'+(wasWithAgent?' I told the agent.':'')});
+  S.history.push(t);S.trip=null;
+}
+function refundWord(r){return r==='full'?'full refund':r==='penalty'?'refund with a penalty':r==='none'?'no refund':'unknown, asked the agent';}
+
+function sendStatus(){
+  const t=S.trip;
+  if(!t){say('owner',{from:'bot',text:'You have no trip in progress. Tell me where and when you need to go.'});return;}
+  say('owner',{from:'bot',kind:'status',tripId:t.id});
+}
+
+function myTrips(){
+  const all=[...S.history,...(S.trip?[S.trip]:[])];
+  if(!all.length){say('owner',{from:'bot',text:'No trips yet. Tell me where and when you need to go.'});return;}
+  say('owner',{from:'bot',text:all.map(t=>t.id+' · '+(t.fields.destination||'?')+' · '+dshort(t.fields.date_from)+' · '+t.status).join('\n')});
+}
+
+/* ---------- cron ---------- */
+function cronRun(){
+  const t=S.trip;if(!t)return;
+  if(t.status==='draft'&&!t.nudged&&S.now-t.draftAt>=2*HOUR){
+    t.nudged=true;log('cron','Request '+t.id+' waited 2 h for approval: nudged Azizbek');
+    say('owner',{from:'bot',text:'Request '+t.id+' to '+t.fields.destination+' is still waiting for your approval.',buttons:[{label:'Approve and send',act:'approve',cls:'pri full'}]});
+  }
+  if(t.status==='sent'&&!t.slaReminded&&S.now>=t.dueAt){
+    t.slaReminded=true;log('cron','Agent missed the 4 h reply time on '+t.id+': reminded the agent and told Azizbek');
+    say('agent',{from:'bot',text:'Reminder: request '+t.id+' has been waiting 4 hours for options.'});
+    say('owner',{from:'bot',text:'The agent has not replied yet. I sent them a reminder.'});
+  }
+  if(t.status==='offers'&&!t.nudgedOffers&&S.now-t.offersAt>=2*HOUR){
+    t.nudgedOffers=true;log('cron','Options for '+t.id+' waited 2 h: nudged Azizbek');
+    say('owner',{from:'bot',text:'The options for '+t.fields.destination+' are waiting for your choice. Prices can change, so it is best to pick soon.'});
+  }
+  if(t.status==='booked'){
+    const o=t.offers[t.chosen]||{};
+    t.reminders.forEach(r=>{if(!r.sent&&S.now>=r.at){r.sent=true;
+      log('cron','Sent the "'+r.type+'" reminder for '+t.id);log('db','UPDATE reminders ('+r.type+' sent)');
+      if(r.type==='check-in')say('owner',{from:'bot',text:'Tomorrow you fly to '+t.fields.destination+'.\nFlight: '+(o.airline?o.airline+', ':'')+(o.outbound||hm(t.flightAt))+'\nOnline check-in should be open now.',buttons:[{label:'Open ticket',act:'openDoc',arg:0}],keep:true});
+      else say('owner',{from:'bot',text:'Your flight to '+t.fields.destination+' leaves at '+hm(t.flightAt)+', in 3 hours. Time to head to the airport.'});
+    }});
+    if(t.doneAt!=null&&S.now>=t.doneAt){log('cron','Trip '+t.id+' ended: marked done');setStatus(t,'done');say('owner',{from:'bot',text:'Welcome back from '+t.fields.destination+'. Trip '+t.id+' is closed and stays in My trips.'});S.history.push(t);S.trip=null;}
+  }
+}
+function nextEventAt(){
+  const t=S.trip;if(!t)return null;const c=[];
+  if(t.status==='draft'&&!t.nudged)c.push(t.draftAt+2*HOUR);
+  if(t.status==='sent'&&!t.slaReminded)c.push(t.dueAt);
+  if(t.status==='offers'&&!t.nudgedOffers)c.push(t.offersAt+2*HOUR);
+  if(t.status==='booked'){t.reminders.forEach(r=>{if(!r.sent)c.push(r.at);});if(t.doneAt!=null)c.push(t.doneAt);}
+  const f=c.filter(x=>x>S.now);return f.length?Math.min(...f):null;
+}
+function advance(ms){S.now+=ms;renderClock();cronRun();}
+
+/* ---------- button actions ---------- */
+function act(m,b){
+  if(m.used&&!m.keep)return;
+  if(!m.keep){m.used=true;}
+  const a=b.act;
+  if(a==='approve')approve();
+  else if(a==='edit'){const t=S.trip;if(t&&t.status==='draft'){setStatus(t,'collecting');say('owner',{from:'bot',text:'What should I change? For example: "make it 13 to 16 Nov" or "add Bobur as a second traveler".'});}}
+  else if(a==='cancelDraft'||a==='cancelYes')cancelTrip();
+  else if(a==='cancelNo')say('owner',{from:'bot',text:'OK, nothing changed.'});
+  else if(a==='choose')choose(b.arg);
+  else if(a==='other')otherOptions();
+  else if(a==='newTrip')say('owner',{from:'bot',text:'Where and when do you need to go? Text or a voice note both work, in Uzbek, Russian or English.'});
+  else if(a==='myTrips')myTrips();
+  else if(a==='status')sendStatus();
+  else if(a==='openDoc'){const t=S.trip||S.history[S.history.length-1];const d=t&&t.docs[b.arg];if(d){say('owner',{from:'bot',kind:'files',files:[d.name]});log('telegram','Re-sent '+d.name+' by file_id (no storage of its own)');}}
+  render('owner');render('agent');
+}
+
+/* ---------- rendering ---------- */
+const ownerChat=document.getElementById('ownerChat'), agentChat=document.getElementById('agentChat');
+function busy(chat,on){S[chat==='owner'?'busyOwner':'busyAgent']=on;render(chat);renderTests();}
+function render(chat){
+  const box=chat==='owner'?ownerChat:agentChat; if(!box)return;
+  box.replaceChildren(...S[chat].map(m=>renderMsg(chat,m)));
+  if((chat==='owner'&&S.busyOwner)||(chat==='agent'&&S.busyAgent))box.append(h('div',{class:'typing'},chat==='owner'?'Trip Assistant is typing…':'bot is reading…'));
+  box.scrollTop=box.scrollHeight;
+  if(chat==='agent'){document.getElementById('agentSub').textContent=S.trip&&['sent','offers','chosen','booked'].includes(S.trip.status)?'open topic: '+S.trip.id+' · '+S.trip.fields.destination:'group · bot + travel agent';}
+}
+function tripById(id){return (S.trip&&S.trip.id===id)?S.trip:S.history.find(t=>t.id===id);}
+function renderMsg(chat,m){
+  if(m.from==='sys')return h('div',{class:'sys'},m.text);
+  const mine=(chat==='owner'&&m.from==='user')||(chat==='agent'&&m.from==='agent');
+  const bub=h('div',{class:'bub'});
+  if(chat==='agent')bub.append(h('div',{class:'who',style:'color:'+(m.from==='agent'?'var(--agent)':'var(--accent)')},m.from==='agent'?'Travel agent':'Trip Assistant (bot)'));
+  if(m.voice){
+    const bars=[8,14,20,11,22,16,9,18,21,12,7,15,19,10,13];
+    bub.append(h('div',{class:'voice'},h('div',{class:'wave','aria-hidden':'true'},bars.map(x=>h('i',{style:'height:'+x+'px'}))),h('span',{style:'font-size:12px;color:var(--muted)'},'voice note')),h('div',{class:'trans'},'Transcript: '+m.text));
+  } else if(m.kind==='draft')bub.append(draftCard(tripById(m.tripId)));
+  else if(m.kind==='compare')bub.append(compareCard(tripById(m.tripId)));
+  else if(m.kind==='trip')bub.append(tripCard(tripById(m.tripId)));
+  else if(m.kind==='status')bub.append(statusCard(tripById(m.tripId)));
+  else if(m.kind==='template')bub.append(h('div',{class:'tpl'},m.text));
+  else if(m.kind==='secure')bub.append(h('div',{class:'card'},h('h4',null,'Protected message',h('span',{class:'chip warn'},'agent only')),h('div',{style:'white-space:pre-line'},m.text)));
+  else if(m.kind==='files')bub.append(h('div',null,m.files.map(n=>h('div',{class:'file'},h('i',null,'PDF'),n))));
+  else bub.append(m.text);
+  bub.append(h('div',{class:'tm'},hm(m.t)));
+  const wrap=h('div',{class:'msg '+(mine?'r':'l')},bub);
+  if(m.buttons&&m.buttons.length){
+    const busyNow=chat==='owner'?S.busyOwner:S.busyAgent;
+    wrap.append(h('div',{class:'kb'},m.buttons.map(b=>h('button',{type:'button',class:'k '+(b.cls||''),disabled:(m.used&&!m.keep)||busyNow,onclick:()=>act(m,b)},b.label))));
+  }
+  return wrap;
+}
+function kv(k,v){return h('div',{class:'kv'},h('span',null,k),h('span',null,v));}
+function draftCard(t){
+  if(!t)return 'Request';const f=t.fields,n=nights(f.date_from,f.date_to);
+  return h('div',{class:'card'},h('h4',null,'Check your request',h('span',{class:'chip'},t.id)),
+    kv('Route',(f.origin||'Tashkent')+' → '+f.destination),kv('Dates',dshort(f.date_from)+' – '+dshort(f.date_to)+(n!=null?' · '+n+' nights':'')),
+    kv('Travelers',String(f.travelers)+(f.traveler_names?' ('+f.traveler_names+')':'')),kv('Flight',f.flight_pref||'no preference'),kv('Baggage',f.baggage||'1 x 23 kg'),
+    kv('Hotel',f.hotel||'no preference'),kv('Budget',f.budget||'not set'),f.notes?kv('Notes',f.notes):null,
+    h('div',{style:'font-size:12px;color:var(--muted);margin-top:4px'},'Passport details stay encrypted until you pick an option.'));
+}
+function refundChip(r){return h('span',{class:'chip '+(r==='full'?'ok':r==='penalty'?'warn':r==='none'?'crit':'')},refundWord(r));}
+function compareCard(t){
+  if(!t)return 'Options';
+  return h('div',{class:'card'},h('h4',null,t.offers.length+' options · '+t.fields.destination,h('span',{class:'chip'},t.id)),
+    t.offers.map((o,i)=>h('div',{class:'offer'+(i===t.recommended?' rec':'')},
+      h('div',{class:'top'},h('span',null,o.label+(i===t.recommended?' · recommended':'')),h('span',null,money(o))),
+      h('div',{class:'ln'},h('b',null,'Flight'),[o.airline,o.outbound,o.stops].filter(Boolean).join(' · ')||'unknown'),
+      h('div',{class:'ln'},h('b',null,'Hotel'),[o.hotel,o.distance].filter(Boolean).join(' · ')||'unknown'),
+      h('div',{class:'ln'},h('b',null,'Cancel'),refundChip(o.refund||'unknown')))),
+    t.reason&&t.recommended!=null?h('div',{class:'reason'},'Why '+(t.offers[t.recommended]||{}).label+': '+t.reason):null);
+}
+function tripCard(t){
+  if(!t)return 'Trip';const o=t.offers[t.chosen]||{};const f=t.fields;
+  return h('div',{class:'card'},h('h4',null,'Booked: '+(f.origin||'Tashkent')+' → '+f.destination,h('span',{class:'chip ok'},t.id)),
+    kv('Out',dshort(f.date_from)+(o.outbound?' · '+o.outbound:'')+(o.airline?' · '+o.airline:'')),kv('Back',dshort(f.date_to)+(o.return?' · '+o.return:'')),
+    kv('Hotel',[o.hotel,o.distance].filter(Boolean).join(' · ')||'see voucher'),kv('Paid',money(o)),kv('Cancel',refundWord(o.refund||'unknown')),
+    kv('Files',t.docs.map(d=>d.name).join('\n')),
+    kv('Reminders',t.reminders.length?t.reminders.map(r=>r.type+': '+fmt(r.at)+(r.skipped?' (already passed)':'')).join('\n'):'none (no flight time found)'));
+}
+function statusCard(t){
+  if(!t)return 'Status';const order=['collecting','draft','sent','offers','chosen','booked','done'];
+  const names={collecting:'Collecting details',draft:'Waiting for your approval',sent:'With the agent',offers:'Options ready, your choice',chosen:'Agent is booking',booked:'Booked, documents ready',done:'Trip finished'};
+  const cur=order.indexOf(t.status);
+  return h('div',{class:'card'},h('h4',null,(t.fields.destination||'Trip')+' · status',h('span',{class:'chip'},t.id)),
+    h('div',{class:'steps'},order.slice(1).map((s,i)=>{const idx=i+1;return h('div',null,h('span',{class:idx<cur?'d':idx===cur?'c':'n'},idx<cur?'✓':idx===cur?'›':'·'),h('span',{style:idx===cur?'font-weight:600':''},names[s]));})),
+    t.status==='sent'?h('div',{style:'font-size:12px;color:var(--muted);margin-top:4px'},'Agent reply due by '+fmt(t.dueAt)):null);
+}
+
+/* ---------- test chips ---------- */
+const ownerTests=document.getElementById('ownerTests'), agentTests=document.getElementById('agentTests');
+function renderTests(){
+  const t=S.trip, bo=S.busyOwner, ba=S.busyAgent;
+  const oc=[
+    {l:'Text: Istanbul, 12 to 15 Nov',v:'I need to fly to Istanbul from 12 to 15 November, morning flight, direct if possible. Hotel in Levent, close to the meeting. Just me.'},
+    {l:'Voice note in Uzbek',v:"Istanbulga 12-noyabr ertalab uchishim kerak, 3 kunga. Mehmonxona Leventda, uchrashuv joyiga yaqin bo'lsin. Faqat o'zim boraman.",voice:true},
+    {l:'Vague: Dubai next week',v:'Need to go to Dubai next week'},
+    {l:'Status?',v:'What is the status of my trip?'},
+    {l:'Cancel',v:'Cancel the trip please'}
+  ];
+  ownerTests.replaceChildren(...oc.map(c=>h('button',{type:'button',class:'tchip',disabled:bo,onclick:()=>{if(c.voice)ownerSays(c.v,true);else{const i=document.getElementById('ownerInput');i.value=c.v;i.focus();}}},c.l)));
+  const ac=[];
+  if(t&&(t.status==='sent'||t.status==='offers')){
+    if(!t.agentTexts.length){ac.push({l:'Paste 3 options (complete)',v:sampleOffers(t,false)});ac.push({l:'Paste 3 options (one detail missing)',v:sampleOffers(t,true)});}
+    else ac.push({l:'Answer the missing detail',v:'Option 2: cancellation with a 1-night penalty if cancelled later than 72 hours before.'});
+  }
+  if(t&&t.status==='chosen')ac.push({l:'Upload ticket and voucher',fn:uploadDocs});
+  if(t&&t.status==='booked')ac.push({l:'Ask a question',v:'Do you want a late checkout on the last day? It costs 40 USD.'});
+  if(!ac.length)ac.push({l:'Nothing to do until Azizbek approves a request',dis:true});
+  agentTests.replaceChildren(...ac.map(c=>h('button',{type:'button',class:'tchip',disabled:ba||c.dis,onclick:()=>{if(c.fn){c.fn();renderTests();}else{const i=document.getElementById('agentInput');i.value=c.v;i.focus();}}},c.l)));
+  document.getElementById('ownerSend').disabled=bo;document.getElementById('agentSend').disabled=ba;
+}
+function sampleOffers(t,gap){
+  const f=t.fields,d1=f.date_from||'2026-11-12',d2=f.date_to||'2026-11-15';const dd=x=>x.slice(8,10)+'.'+x.slice(5,7);
+  return 'Good afternoon! 3 options for '+(f.destination||'Istanbul')+', '+dd(d1)+'–'+dd(d2)+' (sample text, invented):\n\n'
+  +'1) Uzbekistan Airways, '+dd(d1)+' 07:40 → 10:55, direct, back '+dd(d2)+' 19:30. Hotel Grand Levent 5*, 5 min walk to the meeting. Total 1 450 USD. Free cancellation up to 48 h before.\n\n'
+  +'2) Turkish Airlines, '+dd(d1)+' 09:15 → 12:30, direct, back '+dd(d2)+' 21:05. Hotel Sisli Park 4*, 15 min by taxi. Total 1 120 USD.'+(gap?'':' Cancellation with a 1-night penalty.')+'\n\n'
+  +'3) Pegasus via Ankara, '+dd(d1)+' 06:10 → 13:40, back '+dd(d2)+' 18:00. Hotel Levent Residence 4*, 10 min walk. Total 890 USD, non-refundable.';
+}
+
+/* ---------- side panel ---------- */
+const sideBody=document.getElementById('sideBody');
+function renderStats(){document.getElementById('sAi').textContent=S.ai;document.getElementById('sTg').textContent=S.tg;document.getElementById('sDb').textContent=S.db;document.getElementById('sCron').textContent=S.cron;}
+function renderSide(){
+  renderStats();
+  ['log','db','map'].forEach(k=>document.getElementById('tab'+k[0].toUpperCase()+k.slice(1)).setAttribute('aria-selected',String(tab===k)));
+  if(tab==='log'){
+    const names={telegram:'Telegram',ai:'Gemini',db:'D1',cron:'Cron',note:'Note'};
+    sideBody.replaceChildren(h('div',{class:'log'},S.log.length?S.log.map(e=>h('div',{class:'ev'},h('span',{class:'when'},hm(e.t)),h('span',{class:'tag '+e.kind},names[e.kind]),h('div',null,e.text,e.detail?h('details',null,h('summary',null,'show data'),h('pre',null,JSON.stringify(e.detail,null,2))):null))):h('p',{style:'color:var(--muted)'},'Nothing yet. Send a message as Azizbek to start.')));
+    sideBody.scrollTop=sideBody.scrollHeight;
+  } else if(tab==='db'){
+    const trips=[...S.history,...(S.trip?[S.trip]:[])];
+    const row=t=>({id:t.id,status:t.status,fields:t.fields,created:fmt(t.createdAt),agent_due:t.dueAt?fmt(t.dueAt):null,chosen_offer:t.chosen});
+    const t=S.trip;
+    sideBody.replaceChildren(
+      h('div',{class:'dbsec'},h('h3',null,'travelers'),h('p',null,'One row, created once. The passport is stored encrypted and is never sent to the AI.'),h('pre',null,JSON.stringify(S.traveler,null,2))),
+      h('div',{class:'dbsec'},h('h3',null,'trips'),h('p',null,'One row per trip. The status column drives everything the bot does next.'),h('pre',null,trips.length?JSON.stringify(trips.map(row),null,2):'(empty)')),
+      h('div',{class:'dbsec'},h('h3',null,'offers'),h('pre',null,t&&t.offers.length?JSON.stringify(t.offers,null,2):'(none for the open trip)')),
+      h('div',{class:'dbsec'},h('h3',null,'documents'),h('p',null,'Files stay in Telegram. The database keeps only their file_id.'),h('pre',null,t&&t.docs.length?JSON.stringify(t.docs,null,2):'(none for the open trip)')),
+      h('div',{class:'dbsec'},h('h3',null,'reminders'),h('p',null,'The Cron Trigger checks this table on a schedule and sends what is due.'),h('pre',null,t&&t.reminders.length?JSON.stringify(t.reminders.map(r=>({type:r.type,at:fmt(r.at),sent:r.sent})),null,2):'(none for the open trip)'))
+    );
+  } else {
+    sideBody.replaceChildren(h('div',{class:'map'},
+      h('h3',null,'Try this order'),
+      h('ol',null,h('li',null,'As Azizbek, tap "Voice note in Uzbek" or send the Istanbul text.'),h('li',null,'Approve the request card. It appears in the agent group.'),h('li',null,'As the agent, paste the options with one detail missing, then answer the missing detail.'),h('li',null,'As Azizbek, compare and choose an option.'),h('li',null,'As the agent, upload the ticket and voucher.'),h('li',null,'Press "Skip to next event" to fire the reminders and close the trip.')),
+      h('p',null,'Also try: the vague Dubai message (the bot asks for what is missing), waiting 4 hours without replying as the agent, and cancelling a booked trip.'),
+      h('h3',null,'What each part is in the real build'),
+      h('div',{class:'comp'},
+        h('b',null,'Telegram'),h('span',null,'Azizbek’s private chat with the bot, and one group with the agent where every trip gets its own topic.'),
+        h('b',null,'Worker'),h('span',null,'One Cloudflare Worker receives every Telegram message (webhook), decides what to do from the trip status, and replies. It answers Telegram at once and does the slow AI call in the background.'),
+        h('b',null,'Gemini'),h('span',null,'One multimodal call per step: voice note to fields, or agent text, PDF or screenshot to options. In this page the same job is done by Claude or a simple offline parser, only so the simulation runs.'),
+        h('b',null,'D1'),h('span',null,'A small SQLite database: travelers, trips, offers, documents, reminders. See the Database tab.'),
+        h('b',null,'Cron'),h('span',null,'A Cron Trigger every 15 minutes: sends due reminders, nudges a late agent, closes finished trips. Here the clock buttons stand in for time passing.')),
+      h('p',{style:'color:var(--muted)'},'Simplified on purpose: one traveler, one agent, one trip open at a time.')));
+  }
+}
+
+/* ---------- wiring ---------- */
+function renderClock(){document.getElementById('clock').textContent=fmt(S.now);}
+function renderMode(){const m=document.getElementById('mode');if(aiMode==='live'){m.className='mode live';m.textContent='Live AI parsing';m.title='Messages are read by Claude here. In the real build this step is Gemini.';}else if(aiMode==='offline'){m.className='mode off';m.textContent='Offline parser';m.title='A simple built-in parser reads messages. It handles the test inputs; free text may be missed.';}else{m.className='mode';m.textContent='Checking AI…';}}
+function renderAll(){renderClock();renderMode();render('owner');render('agent');renderTests();renderSide();}
+function welcome(){
+  say('owner',{from:'bot',text:'Hello Azizbek. I am your trip assistant. Tell me where and when you need to go, by text or voice note, and I will handle it with your travel agent.',buttons:[{label:'Plan a new trip',act:'newTrip',cls:'pri full'},{label:'My trips',act:'myTrips'},{label:'Status',act:'status'}],keep:true});
+  sys('agent','Group created: Azizbek’s travel agent and the Trip Assistant bot');
+  S.tg=0;renderStats();
+}
+
+document.getElementById('ownerForm').addEventListener('submit',e=>{e.preventDefault();const i=document.getElementById('ownerInput');const v=i.value.trim();if(!v||S.busyOwner)return;i.value='';ownerSays(v,false).then(renderTests);});
+document.getElementById('agentForm').addEventListener('submit',e=>{e.preventDefault();const i=document.getElementById('agentInput');const v=i.value.trim();if(!v||S.busyAgent)return;i.value='';agentSays(v).then(renderTests);});
+document.getElementById('t1').onclick=()=>{advance(HOUR);renderTests();};
+document.getElementById('t4').onclick=()=>{advance(4*HOUR);renderTests();};
+document.getElementById('t24').onclick=()=>{advance(DAY);renderTests();};
+document.getElementById('tnext').onclick=()=>{const n=nextEventAt();if(n==null){log('note','Nothing scheduled. Moved the clock forward 1 hour.');advance(HOUR);}else advance(n-S.now);renderTests();};
+document.getElementById('reset').onclick=()=>{fresh();mid=0;renderAll();welcome();renderTests();};
+document.getElementById('tabLog').onclick=()=>{tab='log';renderSide();};
+document.getElementById('tabDb').onclick=()=>{tab='db';renderSide();};
+document.getElementById('tabMap').onclick=()=>{tab='map';renderSide();};
+/* re-render tests after any button action */
+document.addEventListener('click',e=>{if(e.target.closest&&e.target.closest('.k'))setTimeout(renderTests,0);});
+
+fresh();renderAll();welcome();renderTests();
+(async()=>{
+  try{ if(window.claude&&window.claude.use){ sample=await window.claude.use('sample'); } }catch(e){ sample=null; }
+  aiMode=sample?'live':'offline';renderMode();
+  log('note',aiMode==='live'?'Live AI parsing is on. The first message will ask you to allow it.':'Live AI is not available in this view. Using the built-in offline parser, which handles the test inputs.');
+})();
+})();
+</script>

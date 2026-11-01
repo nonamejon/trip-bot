@@ -1,0 +1,78 @@
+-- Trip bot database (Cloudflare D1 / SQLite)
+
+CREATE TABLE IF NOT EXISTS trips (
+  id              INTEGER PRIMARY KEY AUTOINCREMENT,
+  owner_id        INTEGER NOT NULL,
+  status          TEXT    NOT NULL,              -- collecting | draft | sent | offers | chosen | booked | done | cancelled
+  fields          TEXT    NOT NULL DEFAULT '{}', -- request details (JSON)
+  offers          TEXT    NOT NULL DEFAULT '[]', -- parsed agent options (JSON)
+  agent_texts     TEXT    NOT NULL DEFAULT '[]', -- raw agent messages for the current round (JSON)
+  recommended     INTEGER,
+  reason          TEXT,
+  chosen          INTEGER,
+  agent_thread_id INTEGER,                       -- forum topic id in the agent group, if topics are used
+  clarify_asked   INTEGER NOT NULL DEFAULT 0,
+  draft_at        INTEGER,
+  nudged          INTEGER NOT NULL DEFAULT 0,
+  sent_at         INTEGER,
+  due_at          INTEGER,
+  sla_reminded    INTEGER NOT NULL DEFAULT 0,
+  offers_at       INTEGER,
+  nudged_offers   INTEGER NOT NULL DEFAULT 0,
+  flight_at       INTEGER,
+  done_at         INTEGER,
+  created_at      INTEGER NOT NULL,
+  updated_at      INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS trips_owner_status ON trips(owner_id, status);
+
+CREATE TABLE IF NOT EXISTS travelers (
+  telegram_id  INTEGER PRIMARY KEY,
+  name         TEXT,
+  passport_enc TEXT,                              -- AES-GCM ciphertext, key is the PASSPORT_KEY secret
+  updated_at   INTEGER
+);
+
+CREATE TABLE IF NOT EXISTS documents (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  trip_id    INTEGER NOT NULL,
+  name       TEXT,
+  file_id    TEXT NOT NULL,                       -- Telegram keeps the file; we keep only its id
+  created_at INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS reminders (
+  id      INTEGER PRIMARY KEY AUTOINCREMENT,
+  trip_id INTEGER NOT NULL,
+  type    TEXT NOT NULL,                          -- checkin | leave
+  due_at  INTEGER NOT NULL,
+  sent_at INTEGER
+);
+CREATE INDEX IF NOT EXISTS reminders_due ON reminders(sent_at, due_at);
+
+-- Delayed work for the mock travel agent (empty when a real agent group is used)
+CREATE TABLE IF NOT EXISTS jobs (
+  id      INTEGER PRIMARY KEY AUTOINCREMENT,
+  kind    TEXT NOT NULL,
+  trip_id INTEGER NOT NULL,
+  payload TEXT NOT NULL DEFAULT '{}',
+  due_at  INTEGER NOT NULL,
+  done_at INTEGER
+);
+CREATE INDEX IF NOT EXISTS jobs_due ON jobs(done_at, due_at);
+
+-- Audit log: who did what, when
+CREATE TABLE IF NOT EXISTS events (
+  id      INTEGER PRIMARY KEY AUTOINCREMENT,
+  ts      INTEGER NOT NULL,
+  actor   TEXT NOT NULL,                          -- owner | agent | bot | cron | admin
+  action  TEXT NOT NULL,
+  trip_id INTEGER,
+  detail  TEXT
+);
+
+-- Telegram retries a webhook it thinks failed; this stops double handling
+CREATE TABLE IF NOT EXISTS updates (
+  update_id INTEGER PRIMARY KEY,
+  ts        INTEGER NOT NULL
+);

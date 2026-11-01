@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="uz">
+<head>
+<meta charset="utf-8">
+<title>Zayavkani tasdiqlash</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0}
+a{color:#1D4ED8}a:hover{color:#1E3A8A}
+.ph{width:390px;height:844px;box-sizing:border-box;display:flex;flex-direction:column;font-family:Inter,system-ui,sans-serif;background:#E9EDF1;color:#111827;overflow:hidden}
+.hd{height:60px;flex:none;display:flex;align-items:center;gap:12px;padding:0 16px;background:#FFFFFF;border-bottom:1px solid #D5DCE3}
+.av{width:38px;height:38px;border-radius:50%;background:#1D4ED8;color:#FFFFFF;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:14px}
+.nm{font-size:15px;font-weight:600;line-height:1.2}
+.sb{font-size:12px;color:#4B5563}
+.ch{flex:1;display:flex;flex-direction:column;gap:8px;padding:16px 12px;overflow:hidden}
+.b{align-self:flex-start;max-width:320px;box-sizing:border-box;background:#FFFFFF;border-radius:14px 14px 14px 4px;padding:10px 12px;font-size:14px;line-height:1.45}
+.tm{font-size:11px;color:#4B5563;text-align:right;margin-top:4px}
+.kb{align-self:flex-start;width:320px;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px}
+.k{min-height:44px;border:1px solid #C9D3DE;background:#FFFFFF;border-radius:10px;font:600 14px Inter,system-ui,sans-serif;color:#1D4ED8;padding:8px 10px;cursor:pointer}
+.k1{grid-column:1 / -1}
+.kp{background:#1D4ED8;border-color:#1D4ED8;color:#FFFFFF}
+.kr{color:#B42318}
+.cp{height:60px;flex:none;display:flex;align-items:center;gap:10px;padding:0 12px;background:#FFFFFF;border-top:1px solid #D5DCE3}
+.in{flex:1;height:40px;border:1px solid #D5DCE3;border-radius:20px;padding:0 14px;font:14px Inter,system-ui,sans-serif;color:#111827;background:#F6F8FA}
+.mic{width:44px;height:44px;border-radius:50%;border:none;background:#1D4ED8;color:#FFFFFF;display:flex;align-items:center;justify-content:center;cursor:pointer}
+.ct{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px}
+.cd{font-size:12px;font-weight:600;color:#1D4ED8;background:#E3EDFF;border-radius:8px;padding:3px 8px}
+.rw{display:grid;grid-template-columns:96px minmax(0,1fr);gap:8px;padding:7px 0;border-top:1px solid #E5E9EE;font-size:13.5px}
+.lk{color:#4B5563}
+.vl{color:#111827;font-weight:500}
+.nt{margin-top:8px;font-size:12.5px;color:#4B5563;background:#F4F6F8;border-radius:8px;padding:8px}
+</style>
+</helmet>
+<div class="ph">
+<div class="hd">
+<div class="av">AY</div>
+<div style="display: flex; flex-direction: column; gap: 2px">
+<div class="nm">Shaxsiy yordamchi</div>
+<div class="sb">bot · onlayn</div>
+</div>
+</div>
+<div class="ch">
+<div class="b">
+<div class="ct"><div style="font-weight: 700; font-size: 15px">Yangi zayavka</div><div class="cd">#T-0042</div></div>
+<div class="rw"><div class="lk">Yo'nalish</div><div class="vl">Toshkent → Istanbul</div></div>
+<div class="rw"><div class="lk">Sanalar</div><div class="vl">12.11 – 15.11 · 3 kecha</div></div>
+<div class="rw"><div class="lk">Safarchi</div><div class="vl">Azizbek, 1 kishi</div></div>
+<div class="rw"><div class="lk">Parvoz</div><div class="vl">Ertalab, to'g'ridan-to'g'ri</div></div>
+<div class="rw"><div class="lk">Bagaj</div><div class="vl">1 × 23 kg</div></div>
+<div class="rw"><div class="lk">Mehmonxona</div><div class="vl">4–5*, Levent, nonushta bilan</div></div>
+<div class="rw"><div class="lk">Byudjet</div><div class="vl">Belgilanmagan</div></div>
+<div class="nt">Pasport ma'lumotlari agentga faqat variant tanlangandan keyin yuboriladi.</div>
+<div class="tm">09:07</div>
+</div>
+<div class="kb">
+<button type="button" class="k kp k1">Tasdiqlash va agentga yuborish</button>
+<button type="button" class="k">Tahrirlash</button>
+<button type="button" class="k kr">Bekor qilish</button>
+</div>
+</div>
+<div class="cp">
+<input class="in" type="text" aria-label="Xabar" placeholder="Xabar yozing...">
+<button type="button" class="mic" aria-label="Ovozli xabar yozish"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3"></rect><path d="M5 11a7 7 0 0 0 14 0"></path><path d="M12 18v3"></path></svg></button>
+</div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":390,"height":844}}'>
+class Component extends DCLogic {
+renderVals() {
+return {};
+}
+}
+</script>
+</body>
+</html>

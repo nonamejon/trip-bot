@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="uz">
+<head>
+<meta charset="utf-8">
+<title>Bosh menyu</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0}
+a{color:#1D4ED8}a:hover{color:#1E3A8A}
+.ph{width:390px;height:844px;box-sizing:border-box;display:flex;flex-direction:column;font-family:Inter,system-ui,sans-serif;background:#E9EDF1;color:#111827;overflow:hidden}
+.hd{height:60px;flex:none;display:flex;align-items:center;gap:12px;padding:0 16px;background:#FFFFFF;border-bottom:1px solid #D5DCE3}
+.av{width:38px;height:38px;border-radius:50%;background:#1D4ED8;color:#FFFFFF;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:14px}
+.nm{font-size:15px;font-weight:600;line-height:1.2}
+.sb{font-size:12px;color:#4B5563}
+.ch{flex:1;display:flex;flex-direction:column;gap:8px;padding:16px 12px;overflow:hidden}
+.b{align-self:flex-start;max-width:300px;box-sizing:border-box;background:#FFFFFF;border-radius:14px 14px 14px 4px;padding:10px 12px;font-size:14px;line-height:1.45}
+.u{align-self:flex-end;max-width:300px;box-sizing:border-box;background:#D7E6FF;border-radius:14px 14px 4px 14px;padding:10px 12px;font-size:14px;line-height:1.45}
+.tm{font-size:11px;color:#4B5563;text-align:right;margin-top:4px}
+.kb{align-self:flex-start;width:300px;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px}
+.k{min-height:44px;border:1px solid #C9D3DE;background:#FFFFFF;border-radius:10px;font:600 14px Inter,system-ui,sans-serif;color:#1D4ED8;padding:8px 10px;cursor:pointer}
+.k1{grid-column:1 / -1}
+.kd{color:#4B5563;font-weight:500}
+.cp{height:60px;flex:none;display:flex;align-items:center;gap:10px;padding:0 12px;background:#FFFFFF;border-top:1px solid #D5DCE3}
+.in{flex:1;height:40px;border:1px solid #D5DCE3;border-radius:20px;padding:0 14px;font:14px Inter,system-ui,sans-serif;color:#111827;background:#F6F8FA}
+.mic{width:44px;height:44px;border-radius:50%;border:none;background:#1D4ED8;color:#FFFFFF;display:flex;align-items:center;justify-content:center;cursor:pointer}
+.lb{font-size:12px;font-weight:600;color:#4B5563;text-transform:uppercase;letter-spacing:0.04em}
+.dv{align-self:center;font-size:12px;color:#374151;background:#D5DCE3;border-radius:10px;padding:3px 10px}
+</style>
+</helmet>
+<div class="ph">
+<div class="hd">
+<div class="av">AY</div>
+<div style="display: flex; flex-direction: column; gap: 2px">
+<div class="nm">Shaxsiy yordamchi</div>
+<div class="sb">bot · onlayn</div>
+</div>
+</div>
+<div class="ch">
+<div class="dv">Bugun</div>
+<div class="b">Assalomu alaykum, Azizbek! Men sizning shaxsiy yordamchingizman. Safar kerak bo'lsa, shunchaki yozing yoki ovozli xabar yuboring.<div class="tm">09:02</div></div>
+<div class="b"><div class="lb" style="margin-bottom: 6px">Joriy safar</div><div style="font-weight: 600">#T-0042 · Toshkent → Istanbul</div><div style="color: #4B5563; font-size: 13px">12–15 noyabr · Takliflar keldi, tanlov kutilmoqda</div><div class="tm">09:02</div></div>
+<div class="kb">
+<button type="button" class="k k1">+ Yangi safar</button>
+<button type="button" class="k">Mening safarlarim</button>
+<button type="button" class="k">Hujjatlarim</button>
+<button type="button" class="k kd">Shaxsiy kotib · tez orada</button>
+<button type="button" class="k kd">EAS · tez orada</button>
+<button type="button" class="k k1">Sozlamalar va afzalliklar</button>
+</div>
+</div>
+<div class="cp">
+<input class="in" type="text" aria-label="Xabar" placeholder="Xabar yozing...">
+<button type="button" class="mic" aria-label="Ovozli xabar yozish"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3"></rect><path d="M5 11a7 7 0 0 0 14 0"></path><path d="M12 18v3"></path></svg></button>
+</div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":390,"height":844}}'>
+class Component extends DCLogic {
+renderVals() {
+return {};
+}
+}
+</script>
+</body>
+</html>
