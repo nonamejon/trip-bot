@@ -31,11 +31,11 @@ export default {
       });
       await tg(env, 'setMyCommands', {
         commands: [
-          { command: 'status', description: 'Where the current trip stands' },
-          { command: 'trips', description: 'My trips' },
-          { command: 'passport', description: 'Save passport details (encrypted)' },
-          { command: 'cancel', description: 'Cancel the current trip' },
-          { command: 'help', description: 'How to use the assistant' },
+          { command: 'status', description: 'Joriy safar holati' },
+          { command: 'trips', description: 'Safarlarim' },
+          { command: 'passport', description: 'Pasport maʼlumotlarini saqlash (shifrlangan)' },
+          { command: 'cancel', description: 'Joriy safarni bekor qilish' },
+          { command: 'help', description: 'Yordamchidan qanday foydalanish' },
         ],
       });
       const me = await tg(env, 'getMe');
@@ -66,12 +66,12 @@ async function handleUpdate(env, update) {
   if (msg.chat.type === 'private') {
     const known = [env.OWNER_ID, env.ADMIN_ID].filter(Boolean).map(String);
     if (!known.includes(String(msg.from.id))) {
-      return send(env, msg.chat.id, `This is a private assistant.\nYour Telegram ID is <code>${esc(msg.from.id)}</code> — put it in OWNER_ID if this bot is meant for you.`);
+      return send(env, msg.chat.id, `Bu shaxsiy yordamchi.\nTelegram ID raqamingiz: <code>${esc(msg.from.id)}</code>. Agar bot siz uchun moʻljallangan boʻlsa, bu raqamni administratorga yuboring.`);
     }
     return handleOwnerMessage(env, msg);
   }
 
   if (!isMock(env) && String(msg.chat.id) === String(env.AGENT_CHAT_ID)) return handleAgentMessage(env, msg);
 
-  if (msg.text?.startsWith('/chatid')) return send(env, msg.chat.id, `This chat's ID is <code>${esc(msg.chat.id)}</code> — put it in AGENT_CHAT_ID.`);
+  if (msg.text?.startsWith('/chatid')) return send(env, msg.chat.id, `Bu chat ID raqami: <code>${esc(msg.chat.id)}</code> — uni AGENT_CHAT_ID ga yozing.`);
 }

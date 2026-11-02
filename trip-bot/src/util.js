@@ -59,8 +59,8 @@ export async function setStatus(env, t, status, actor = 'bot') {
 }
 
 // ---------- time ----------
-const WD = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-const MO = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+const WD = ['yakshanba', 'dushanba', 'seshanba', 'chorshanba', 'payshanba', 'juma', 'shanba'];
+const MO = ['yanvar', 'fevral', 'mart', 'aprel', 'may', 'iyun', 'iyul', 'avgust', 'sentabr', 'oktabr', 'noyabr', 'dekabr'];
 const p2 = (n) => String(n).padStart(2, '0');
 export const tz = (env) => (Number(env.TZ_OFFSET_MIN) || 0) * MIN;
 
@@ -70,13 +70,13 @@ export function localISODate(env, ms = Date.now()) {
 }
 export function fmtLocal(env, ms) {
   const d = new Date(ms + tz(env));
-  return `${WD[d.getUTCDay()]} ${d.getUTCDate()} ${MO[d.getUTCMonth()]}, ${p2(d.getUTCHours())}:${p2(d.getUTCMinutes())}`;
+  return `${WD[d.getUTCDay()]}, ${d.getUTCDate()}-${MO[d.getUTCMonth()]}, ${p2(d.getUTCHours())}:${p2(d.getUTCMinutes())}`;
 }
 export function hmLocal(env, ms) { const d = new Date(ms + tz(env)); return `${p2(d.getUTCHours())}:${p2(d.getUTCMinutes())}`; }
 export function dshort(iso) {
   if (!iso || !/^\d{4}-\d{2}-\d{2}/.test(iso)) return '?';
   const [, m, d] = iso.slice(0, 10).split('-').map(Number);
-  return `${d} ${MO[m - 1]}`;
+  return `${d}-${MO[m - 1]}`;
 }
 // "2026-11-12" or "2026-11-12T07:40" in the owner's local time -> UTC ms
 export function localToUtc(env, iso) {
@@ -96,10 +96,10 @@ export function nights(a, b) {
 // ---------- text ----------
 export const esc = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 export function money(o) {
-  if (!o || o.total_price == null) return 'price unknown';
+  if (!o || o.total_price == null) return 'narxi nomaʼlum';
   return Number(o.total_price).toLocaleString('en-US').replace(/,/g, ' ') + ' ' + (o.currency || 'USD');
 }
-export const refundWord = (r) => ({ full: 'full refund', penalty: 'refund with a penalty', none: 'no refund' }[r] || 'not stated');
+export const refundWord = (r) => ({ full: 'toʻliq qaytariladi', penalty: 'jarima bilan qaytariladi', none: 'qaytarilmaydi' }[r] || 'koʻrsatilmagan');
 
 // ---------- encoding ----------
 export function b64(bytes) {

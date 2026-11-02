@@ -86,7 +86,7 @@ The cron runs every minute. It delivers mock-agent replies, reminds a late agent
 
 ## Notes
 
-- **Language.** The bot's fixed messages are in English. Its questions follow the language Azizbek writes in. To switch the fixed messages to Uzbek, edit the strings in `src/flow.js`.
+- **Language.** The bot speaks Uzbek (Latin script) to Azizbek and the agent; he can write or speak in Uzbek, Russian or English. Admin commands and error alerts are in English. Fixed strings live in `src/flow.js`, dates in `src/util.js`, and the language Gemini answers in is set in the prompts in `src/gemini.js` and `src/mock.js`.
 - **Gemini model.** Check that `GEMINI_MODEL` is still a current model name in Google AI Studio before deploying. If it was retired, change it to the current Flash model.
 - **Cost.** One trip makes about 3 to 6 Gemini calls. The Cloudflare free plan covers the Worker, a cron trigger every minute, and D1 at this size. If a large voice note or PDF ever hits the free plan's CPU limit, the $5/month Workers plan removes it.
 - **Not built yet.** The personal-secretary and EAS sections from the original plan.

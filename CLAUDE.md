@@ -87,7 +87,7 @@ The local test fakes Telegram and Gemini, so these still need checking live:
 
 ## Known gaps and possible next work
 
-- **English messages.** The bot's fixed messages are English; Azizbek would need Uzbek or Russian. They live in `src/flow.js`.
+- **Language.** Done: everything Azizbek and the agent see is Uzbek (Latin script, with ʻ/ʼ): fixed messages, buttons, dates, the command menu, the `.ics` file, Gemini's questions, request fields and option summaries, and the mock agent. Admin command output and error alerts stay English (for the maintainer). The mock PDFs are English/ASCII (the tiny PDF writer has no Unicode font).
 - **Pausing the agent.** There's no way to tell the mock agent to stop other than cancelling the trip.
 - **Missing flight time.** If the chosen offer has no `outbound_datetime`, no reminders are set; the bot says so, but there's no command to add the time later.
 - **One trip at a time.** Only one open trip per owner (`activeTrip` takes the newest).

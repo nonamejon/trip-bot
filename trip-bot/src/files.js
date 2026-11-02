@@ -11,13 +11,13 @@ export function tripIcs(t, offer) {
   const ev = [];
   if (t.flight_at) {
     ev.push(['BEGIN:VEVENT', `UID:${t.code}-flight@trip-bot`, `DTSTAMP:${now}`, `DTSTART:${icsTime(t.flight_at)}`, `DTEND:${icsTime(t.flight_at + 3 * 3600e3)}`,
-      `SUMMARY:${icsText('Flight to ' + f.destination)}`, `DESCRIPTION:${icsText([offer?.airline, offer?.outbound, t.code].filter(Boolean).join(' · '))}`,
-      'BEGIN:VALARM', 'TRIGGER:-PT3H', 'ACTION:DISPLAY', 'DESCRIPTION:Leave for the airport', 'END:VALARM', 'END:VEVENT'].join('\r\n'));
+      `SUMMARY:${icsText('Parvoz: ' + (f.origin || 'Toshkent') + ' → ' + f.destination)}`, `DESCRIPTION:${icsText([offer?.airline, offer?.outbound, t.code].filter(Boolean).join(' · '))}`,
+      'BEGIN:VALARM', 'TRIGGER:-PT3H', 'ACTION:DISPLAY', 'DESCRIPTION:Aeroportga yoʻl olish vaqti', 'END:VALARM', 'END:VEVENT'].join('\r\n'));
   }
   if (f.date_from && f.date_to) {
     const end = new Date(Date.parse(f.date_to.slice(0, 10)) + 86400e3).toISOString().slice(0, 10);
     ev.push(['BEGIN:VEVENT', `UID:${t.code}-trip@trip-bot`, `DTSTAMP:${now}`, `DTSTART;VALUE=DATE:${icsDate(f.date_from)}`, `DTEND;VALUE=DATE:${icsDate(end)}`,
-      `SUMMARY:${icsText('Trip: ' + f.destination)}`, `DESCRIPTION:${icsText([offer?.hotel, t.code].filter(Boolean).join(' · '))}`, 'END:VEVENT'].join('\r\n'));
+      `SUMMARY:${icsText('Safar: ' + f.destination)}`, `DESCRIPTION:${icsText([offer?.hotel, t.code].filter(Boolean).join(' · '))}`, 'END:VEVENT'].join('\r\n'));
   }
   return new TextEncoder().encode(['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//trip-bot//EN', ...ev, 'END:VCALENDAR'].join('\r\n') + '\r\n');
 }

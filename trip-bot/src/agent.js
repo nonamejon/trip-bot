@@ -10,7 +10,7 @@ export const isMock = (env) => (env.AGENT_MODE || 'mock') !== 'group';
 
 export async function mirror(env, t, who, text) {
   if (!isMock(env) || env.MOCK_MIRROR === 'false') return;
-  await send(env, t.owner_id, `<i>[Agent group · ${t.code}] ${esc(who)}:</i>\n${esc(text)}`).catch(() => {});
+  await send(env, t.owner_id, `<i>[Agent guruhi · ${t.code}] ${esc(who)}:</i>\n${esc(text)}`).catch(() => {});
 }
 
 export async function openAgentThread(env, t) {
@@ -32,7 +32,7 @@ export async function toAgent(env, t, text, kind) {
     await send(env, env.AGENT_CHAT_ID, esc(text), t.agent_thread_id ? { message_thread_id: t.agent_thread_id } : {});
     return;
   }
-  await mirror(env, t, 'Bot → agent', kind === 'passport' ? '(passport details sent to the agent, hidden here)' : text);
+  await mirror(env, t, 'Bot → agent', kind === 'passport' ? '(pasport maʼlumotlari agentga yuborildi, bu yerda yashirilgan)' : text);
   const d = Number(env.MOCK_DELAY_MIN) || 2;
   const plan = { request: ['mock_offers', d], other: ['mock_offers', d], clarify: ['mock_clarify', 1], choice: ['mock_book', d], cancel: ['mock_cancel', 1], note: ['mock_note', 1] }[kind];
   if (plan) {

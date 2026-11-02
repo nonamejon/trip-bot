@@ -32,7 +32,7 @@ async function runJob(env, j) {
     if (t.status !== 'sent') return;
     const text = await gemini(env, {
       temperature: 0.6,
-      prompt: `You are a travel agent in Tashkent chatting in Telegram. Earlier you sent these options:\n"""${t.agent_texts.join('\n\n')}"""\n\nYour client's assistant bot then asked:\n"""${payload.text}"""\n\nAnswer only what was asked, briefly, with plausible specific terms. Plain text, one to three lines, no greeting.`,
+      prompt: `You are a travel agent in Tashkent chatting in Telegram. Earlier you sent these options:\n"""${t.agent_texts.join('\n\n')}"""\n\nYour client's assistant bot then asked:\n"""${payload.text}"""\n\nAnswer only what was asked, briefly, with plausible specific terms. Write in Uzbek (Latin script). Plain text, one to three lines, no greeting.`,
     });
     return agentSays(env, t, text);
   }
@@ -44,15 +44,15 @@ async function runJob(env, j) {
     const ticket = tinyPdf(['E-TICKET (TEST DOCUMENT, NOT VALID FOR TRAVEL)', '', `Trip ${t.code}   Booking ref ${ref}`, `Passenger: AZIZBEK`,
       `${f.origin || 'Tashkent'} -> ${f.destination}`, `Out: ${dshort(f.date_from)}  ${o.airline || ''}  ${o.outbound || ''}`, `Back: ${dshort(f.date_to)}  ${o.return || ''}`, `Total: ${money(o)}`]);
     const voucher = tinyPdf(['HOTEL VOUCHER (TEST DOCUMENT)', '', `Trip ${t.code}   Ref ${ref}`, `Hotel: ${o.hotel || '-'}`, `Check-in: ${dshort(f.date_from)}   Check-out: ${dshort(f.date_to)}`, `Guest: AZIZBEK`]);
-    await mirror(env, t, 'Agent', 'Booked. Sending the ticket and the hotel voucher.');
+    await mirror(env, t, 'Agent', 'Bron qilindi. Chipta va mehmonxona vaucherini yuboryapman.');
     await logEvent(env, 'agent', 'mock_booked', t.id, ref);
     return handleAgentDocs(env, t, [
       { name: `Ticket_${t.code}.pdf`, bytes: ticket, mime: 'application/pdf' },
       { name: `Hotel_voucher_${t.code}.pdf`, bytes: voucher, mime: 'application/pdf' },
     ]);
   }
-  if (j.kind === 'mock_cancel') return mirror(env, t, 'Agent', 'Cancelled. Any refund follows the fare rules; I will confirm the amount tomorrow.');
-  if (j.kind === 'mock_note') return mirror(env, t, 'Agent', 'Noted, thank you.');
+  if (j.kind === 'mock_cancel') return mirror(env, t, 'Agent', 'Bekor qilindi. Pul qaytarish tarif qoidalariga koʻra boʻladi, summani ertaga tasdiqlayman.');
+  if (j.kind === 'mock_note') return mirror(env, t, 'Agent', 'Qabul qilindi, rahmat.');
 }
 
 async function agentSays(env, t, text) {
@@ -65,7 +65,7 @@ function offersPrompt(env, t, gap) {
 
 ${templateText(t)}
 
-Reply as a real agent would in Telegram: a one-line greeting, then 3 options numbered 1) 2) 3).
+Reply as a real agent would in Telegram, in Uzbek (Latin script): a one-line greeting, then 3 options numbered 1) 2) 3).
 For each option: airline and flight number, departure date with local departure and arrival times, direct or the connection, the return flight date and time, the hotel name with stars and how far it is from where the client needs to be, the total price in USD for everything, and the cancellation terms.
 Use airlines that actually fly this route from Tashkent and realistic prices. Make the three options differ in price, timing and flexibility.${gap ? '\nForget to mention the cancellation terms for option 2.' : ''}
 Plain text, no markdown, under 150 words.`;
