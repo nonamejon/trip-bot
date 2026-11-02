@@ -28,13 +28,13 @@ async function runJob(env, j) {
   if (j.kind === 'mock_offers') {
     if (t.status !== 'sent') return;
     const gap = Math.random() < 0.5; // half the time the agent forgets a detail, like people do
-    const text = await gemini(env, { prompt: offersPrompt(env, t, gap), temperature: 0.9 });
+    const text = await gemini(env, { prompt: offersPrompt(env, t, gap), temperature: 0.9, timeoutMs: 45000 }); // cron, not the 30 s webhook budget
     return agentSays(env, t, text);
   }
   if (j.kind === 'mock_clarify') {
     if (t.status !== 'sent') return;
     const text = await gemini(env, {
-      temperature: 0.6,
+      temperature: 0.6, timeoutMs: 45000,
       prompt: `You are a travel agent in Tashkent chatting in Telegram. Earlier you sent these options:\n"""${t.agent_texts.join('\n\n')}"""\n\nYour client's assistant bot then asked:\n"""${payload.text}"""\n\nAnswer only what was asked, briefly, with plausible specific terms. Write in ${A.geminiLang}. Plain text, one to three lines, no greeting.`,
     });
     return agentSays(env, t, text);
@@ -71,7 +71,7 @@ function offersPrompt(env, t, gap) {
 ${templateText(env, t)}
 
 Reply as a real agent would in Telegram, in ${AL(env).geminiLang}: a one-line greeting, then 3 options numbered 1) 2) 3).
-For each option: airline and flight number, departure date with local departure and arrival times, direct or the connection, the return flight date and time, the hotel name with stars and how far it is from where the client needs to be, the total price in USD for everything, and the cancellation terms.
+For each option: airline and flight number, departure date with local departure and arrival times, direct or the connection, the return flight date and time, the hotel name with stars and how far it is from where the client needs to be, the baggage allowance of the fare, the total price in USD for everything, and the cancellation terms.
 Use airlines that actually fly this route from Tashkent and realistic prices. Make the three options differ in price, timing and flexibility.${gap ? '\nForget to mention the cancellation terms for option 2.' : ''}
 Plain text, no markdown, under 150 words.`;
 }

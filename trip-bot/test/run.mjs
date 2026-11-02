@@ -192,16 +192,14 @@ assert(trav.passport_enc.startsWith('v1:') && !trav.passport_enc.includes('FA123
 
 await say('Need to go to Dubai'); show('vague request');
 assert(status().status === 'collecting', 'vague request stays collecting');
-assert(lastText().includes('Dubai') && lastText().includes('❓') && lastText().includes('bagaj'), 'first request shows the card with ❓ and asks for everything missing at once');
+assert(lastText().includes('Dubai') && lastText().includes('❓') && lastText().includes('yoʻlovchilar soni') && !/Aniqlashtirib.*bagaj/.test(lastText()), 'first request shows the card with ❓ and asks for everything missing at once (not baggage)');
 await say('Dubai, 45 people'); show('impossible traveler count');
 assert(lastParsePrompt.includes('Azizbek: Need to go to Dubai') && lastParsePrompt.includes('Bot: '), 'Gemini gets the recent conversation (both sides)');
 assert(sqlite.prepare('SELECT fields FROM trips ORDER BY id DESC').get().fields.indexOf('"travelers"') === -1, 'an impossible traveler count is dropped and asked again');
 await say('cancel'); show('cancel while collecting');
 
 await voice(); show('voice note');
-assert(status().status === 'collecting' && lastText().includes('bagaj') && !lastText().includes('Eshitdim'), 'voice note: card shown, baggage asked, the voice note is not echoed back');
-await say('1 ta chamadon, 23 kg'); show('baggage answer');
-assert(status().status === 'draft' && lastText().includes('23 kg'), 'baggage answer completes the request');
+assert(status().status === 'draft' && lastText().includes('tarifga koʻra') && !lastText().includes('Eshitdim'), 'voice note: complete without baggage (left to the fare), not echoed back');
 const audioCalls = () => geminiCalls.filter((c) => c === 'route+audio').length;
 let before = audioCalls();
 await update({ message: { message_id: ++msgId, from: owner, chat: { id: 111, type: 'private' }, document: { file_id: 'M4A1', file_name: 'note.m4a', mime_type: 'audio/x-m4a', file_size: 50000 } } });

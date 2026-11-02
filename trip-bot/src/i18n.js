@@ -195,7 +195,8 @@ export const A = {
   uz: {
     request: 'SOʻROV', route: 'Yoʻnalish', dates: 'Sanalar', travelers: 'Yoʻlovchilar', flight: 'Parvoz', baggage: 'Bagaj', hotel: 'Mehmonxona', budget: 'Byudjet', notes: 'Izoh',
     nights: (n) => `${n} kecha`, noPref: 'farqi yoʻq', notSet: 'belgilanmagan', origin: 'Toshkent',
-    ask: 'Iltimos, har bir variantni alohida yozing: reyslar, mehmonxona, umumiy narx, bekor qilish shartlari.',
+    ask: 'Iltimos, har bir variantni alohida yozing: reyslar, bagaj normasi, mehmonxona, umumiy narx, bekor qilish shartlari.',
+    baggageAsk: 'aytilmagan — har bir variantda bagaj normasini yozing',
     note: (code) => `Azizbekdan ${code} boʻyicha izoh:`, fileAttached: '(fayl biriktirilgan)',
     chose: (l, price) => `Azizbek tanladi: ${l} (${price}). Iltimos, bron qiling va chipta hamda vaucherni shu yerga yuboring.`,
     passport: (code) => `${code} uchun pasport maʼlumotlari:`,
@@ -217,7 +218,8 @@ export const A = {
   ru: {
     request: 'ЗАЯВКА', route: 'Маршрут', dates: 'Даты', travelers: 'Пассажиры', flight: 'Перелёт', baggage: 'Багаж', hotel: 'Отель', budget: 'Бюджет', notes: 'Примечания',
     nights: (n) => `${n} ${plural(n, ['ночь', 'ночи', 'ночей'])}`, noPref: 'без предпочтений', notSet: 'не указан', origin: 'Ташкент',
-    ask: 'Пожалуйста, опишите каждый вариант отдельно: перелёты, отель, общая стоимость, условия отмены.',
+    ask: 'Пожалуйста, опишите каждый вариант отдельно: перелёты, норма багажа, отель, общая стоимость, условия отмены.',
+    baggageAsk: 'не указан — укажите норму багажа в каждом варианте',
     note: (code) => `Комментарий Азизбека по ${code}:`, fileAttached: '(файл приложен)',
     chose: (l, price) => `Азизбек выбрал: ${l} (${price}). Пожалуйста, забронируйте и пришлите сюда билет и ваучер.`,
     passport: (code) => `Паспортные данные для ${code}:`,
@@ -376,9 +378,9 @@ export const KB_TRIPS = new Set(LANGS.map((l) => O[l].kbTrips));
 export const KB_SEC = new Set(LANGS.map((l) => O[l].kbSec));
 
 // Trip request: what the bot asks for itself (not Gemini), from what is really missing.
-O.uz.field.baggage = 'bagaj (necha kg?)';
-O.ru.field.baggage = 'багаж (сколько кг?)';
 O.uz.askMissing = (list) => `Aniqlashtirib bering: ${list}.`;
 O.ru.askMissing = (list) => `Уточните, пожалуйста: ${list}.`;
 O.uz.optionalHint = 'Xohlasangiz, reys vaqti va mehmonxona boʻyicha istaklaringizni ham yozing.';
 O.ru.optionalHint = 'Если хотите, напишите и пожелания по времени рейса и отелю.';
+O.uz.baggageByFare = 'tarifga koʻra (agent har bir variantda yozadi)';
+O.ru.baggageByFare = 'по тарифу (агент укажет в каждом варианте)';

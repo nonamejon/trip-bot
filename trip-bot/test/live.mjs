@@ -107,9 +107,9 @@ if (process.env.SCENARIO === 'intake') {
   const expect = (cond, what) => { report.push(`\n**${cond ? 'OK' : 'WRONG'}:** ${what} — ${JSON.stringify(fields())}\n`); console.log(`   ${cond ? 'OK   ' : 'WRONG'} ${what}`); };
   await say('/start'); await tap('lg:uz', 'Oʻzbekcha');
   await say('Istanbulga 12-dan 15-noyabrgacha, 3 kun, bir kishilik.');
-  expect(fields().destination && fields().date_from?.endsWith('-11-12') && fields().date_to?.endsWith('-11-15') && fields().travelers === 1 && !fields().baggage, 'first message: Istanbul, 12-15 Nov, 1 person; only baggage asked');
+  expect(fields().destination && fields().date_from?.endsWith('-11-12') && fields().date_to?.endsWith('-11-15') && fields().travelers === 1 && trip().status === 'draft', 'first message: Istanbul, 12-15 Nov, 1 person; complete, nothing asked');
   await say('Bagaj 10 kilo');
-  expect(trip().status === 'draft' && /10/.test(fields().baggage || ''), 'baggage answer completes it');
+  expect(trip().status === 'draft' && /10/.test(fields().baggage || ''), 'baggage mentioned later is added');
   await say('Nimaga yoʻlovchilar sonini 13 ta deb yozib qoʻyibsan?');
   expect(fields().travelers === 1, 'complaint about "13" does not change the count');
   await tap(`cx:${trip().id}`, 'Bekor qilish');
@@ -121,8 +121,7 @@ if (process.env.SCENARIO === 'intake') {
   expect(fields().date_to?.endsWith('-11-15'), '10 days -> back 15 Nov');
   await say("Bo'ldi, qolganlar kelolmaydi.");
   expect(fields().travelers === 1, 'the others cannot come -> 1 person');
-  await say('faqat qoʻl yuki');
-  expect(trip().status === 'draft' && fields().baggage, 'hand luggage only -> complete');
+  expect(trip().status === 'draft', 'complete without being asked for baggage');
   fs.writeFileSync(reportPath, report.join('\n'));
   process.exit(0);
 }

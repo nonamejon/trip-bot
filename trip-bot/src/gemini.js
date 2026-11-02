@@ -92,7 +92,7 @@ Return the complete, updated trip request as JSON:
 - origin: where he flies from; "${S.origin}" unless he says otherwise.
 - date_from, date_to: ALWAYS digits "YYYY-MM-DD", even though other values are in ${S.name}. "12-15 noyabr" / "с 12 по 15 ноября" means date_from = the 12th and date_to = the 15th. A length ("3 kunga", "на неделю") counts from date_from. Use the nearest future date.
 - travelers: the number of people travelling, ONLY if he says it ("yolgʻiz", "bir kishilik", "1 kishi", "вдвоём", "3 kishi"). Numbers in dates, times, prices or lengths of stay are never the traveler count. null if he has not said.
-- baggage: ONLY what he says ("23 kg", "10 kilo", "faqat qoʻl yuki"); null if he has not said. Never assume a default.
+- baggage: ONLY what he says ("faqat qoʻl yuki", "1 chamadon", "23 kg"); null if he has not said. Never assume a default and never ask for it.
 - traveler_names, flight_pref (time of day, direct or not, class), hotel (his wishes, short), budget, notes: only what he says.
 - transcript: if there is a voice note, its transcript in the original language; else null.
 Keep earlier values unless he changes or corrects them; a correction always wins. If he complains that a value is wrong, fix that value. Never invent anything. Text values in ${S.name}, using ${S.places}.`;
@@ -108,7 +108,7 @@ const OFFERS_SCHEMA = {
       items: {
         type: 'OBJECT',
         properties: {
-          label: { type: 'STRING' }, airline: S(), outbound: S(), outbound_datetime: S(), return: S(), stops: S(),
+          label: { type: 'STRING' }, airline: S(), outbound: S(), outbound_datetime: S(), return: S(), stops: S(), baggage: S(),
           hotel: S(), distance: S(), total_price: { type: 'NUMBER', nullable: true }, currency: S(),
           refund: { type: 'STRING', enum: ['full', 'penalty', 'none', 'unknown'] }, refund_note: S(),
         },
@@ -131,12 +131,12 @@ Everything the agent has written for this request so far (later messages may add
 ${media.length ? 'The agent also attached the file(s) included here; read them.' : ''}
 
 Return JSON:
-offers: every option the agent gave, in order, each with label (${S.labels}), airline, outbound (short, like "07:40 → 10:55"), outbound_datetime ("YYYY-MM-DDTHH:MM", local departure time), return (short, with date and time, like ${S.ret}), stops (${S.stops}), hotel (name and stars), distance (to where he needs to be), total_price (number), currency (ISO code, like "USD"), refund ("full", "penalty", "none" or "unknown"), refund_note.
+offers: every option the agent gave, in order, each with label (${S.labels}), airline, outbound (short, like "07:40 → 10:55"), outbound_datetime ("YYYY-MM-DDTHH:MM", local departure time), return (short, with date and time, like ${S.ret}), stops (${S.stops}), baggage (the fare's allowance, short, like "23 kg" or "hand luggage only"), hotel (name and stars), distance (to where he needs to be), total_price (number), currency (ISO code, like "USD"), refund ("full", "penalty", "none" or "unknown"), refund_note.
 recommended: index (0-based) of the best fit for the request: his wishes on flight time and hotel location first, then flexibility, then price.
 reason: one short sentence saying why.
 Write all free-text values in ${S.name}; keep airline names, flight numbers and hotel names as they are.
 Use only what the agent wrote; anything not stated stays null or "unknown". If there are no options in the text, return offers: [].`;
-  return gemini(env, { prompt, media, schema: OFFERS_SCHEMA });
+  return gemini(env, { prompt, media, schema: OFFERS_SCHEMA, timeoutMs: 40000 });
 }
 
 // ---------- 3. Short transcription for voice notes sent mid-trip ----------
@@ -227,6 +227,7 @@ Return JSON: source_lang (ISO code), target_lang (ISO code), translation.`;
   return gemini(env, {
     prompt, media,
     schema: { type: 'OBJECT', properties: { source_lang: S(), target_lang: S(), translation: { type: 'STRING' } }, required: ['translation'] },
+    timeoutMs: 40000,
   });
 }
 
@@ -241,7 +242,7 @@ Write it in the language he asks for; if he does not say, in ${LANG_NAME[ownerLa
 Ready to send: a greeting, a clear body, a polite closing and his name "Azizbek" (add a surname only if he gives one). Where a fact you need is missing, write a short placeholder in square brackets, like [sana].
 Plain text, no markdown.
 Return JSON: subject (a short subject line, or null for a personal message), body, lang (ISO code).`;
-  return gemini(env, { prompt, schema: LETTER_SCHEMA, temperature: 0.5 });
+  return gemini(env, { prompt, schema: LETTER_SCHEMA, temperature: 0.5, timeoutMs: 40000 });
 }
 
 export function reviseLetter(env, letter, instruction) {
@@ -252,7 +253,7 @@ Subject: ${letter.subject || '(none)'}
 His instruction: """${instruction}"""
 Rewrite the letter following the instruction (it may ask to change content, tone, length, or to translate it). Keep everything else.
 Plain text, no markdown. Return JSON: subject, body, lang (ISO code).`;
-  return gemini(env, { prompt, schema: LETTER_SCHEMA, temperature: 0.4 });
+  return gemini(env, { prompt, schema: LETTER_SCHEMA, temperature: 0.4, timeoutMs: 40000 });
 }
 
 // ---------- 7. A date and time from free text ("12-noyabr 07:40", "завтра в 9") ----------

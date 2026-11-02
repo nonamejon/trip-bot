@@ -19,7 +19,8 @@ import { tripIcs } from './files.js';
 import { O, AL, agentLang, PICK_TEXT, PICK_BUTTONS, COMMANDS, KB_TRIPS, KB_SEC } from './i18n.js';
 import { secMenu, addEvent, addReminder, showAgenda, listReminders, doTranslate, doLetter, doRevise, handleSecCallback } from './secretary.js';
 
-const REQUIRED = ['destination', 'date_from', 'date_to', 'travelers', 'baggage'];
+// Baggage is not required: the agent states the allowance of each fare instead.
+const REQUIRED = ['destination', 'date_from', 'date_to', 'travelers'];
 const FIELD_KEYS = ['origin', 'destination', 'date_from', 'date_to', 'travelers', 'traveler_names', 'flight_pref', 'baggage', 'hotel', 'budget', 'notes'];
 const isDate = (s) => /^\d{4}-\d{2}-\d{2}$/.test(s || '');
 const isTime = (s) => /^\d{2}:\d{2}$/.test(s || '');
@@ -49,7 +50,7 @@ export function templateText(env, t) {
     `${A.dates}: ${dshort(f.date_from, al)} – ${dshort(f.date_to, al)}${n != null ? ` (${A.nights(n)})` : ''}`,
     `${A.travelers}: ${f.travelers}${f.traveler_names ? ` (${f.traveler_names})` : ''}`,
     `${A.flight}: ${f.flight_pref || A.noPref}`,
-    `${A.baggage}: ${f.baggage || A.notSet}`,
+    `${A.baggage}: ${f.baggage || A.baggageAsk}`,
     `${A.hotel}: ${f.hotel || A.noPref}`,
     `${A.budget}: ${f.budget || A.notSet}`,
     f.notes ? `${A.notes}: ${f.notes}` : null,
@@ -66,7 +67,7 @@ function draftText(L, lang, t) {
     `${L.dates}: ${f.date_from ? dshort(f.date_from, lang) : Q} – ${f.date_to ? dshort(f.date_to, lang) : Q}${n != null ? ` (${L.nights(n)})` : ''}`,
     `${L.travelers}: ${f.travelers ? esc(f.travelers) : Q}${f.traveler_names ? ` (${esc(f.traveler_names)})` : ''}`,
     `${L.flight}: ${esc(f.flight_pref || L.noPref)}`,
-    `${L.baggage}: ${f.baggage ? esc(f.baggage) : Q}`,
+    `${L.baggage}: ${f.baggage ? esc(f.baggage) : L.baggageByFare}`,
     `${L.hotel}: ${esc(f.hotel || L.noPref)}`,
     `${L.budget}: ${esc(f.budget || L.notSet)}`,
     f.notes ? `${L.notes}: ${esc(f.notes)}` : null, '',
@@ -81,6 +82,7 @@ function compareText(L, lang, t) {
       `${L.flight}: ${esc([o.airline, o.outbound, o.stops].filter(Boolean).join(' · ') || L.notStated)}`,
       o.return ? `${L.back}: ${esc(o.return)}` : null,
       `${L.hotel}: ${esc([o.hotel, o.distance].filter(Boolean).join(' · ') || L.notStated)}`,
+      o.baggage ? `${L.baggage}: ${esc(o.baggage)}` : null,
       `${L.cancellation}: ${esc(refundWord(o.refund, lang))}${o.refund_note ? ` (${esc(o.refund_note)})` : ''}`);
   });
   if (t.recommended != null && t.reason && t.offers[t.recommended]) out.push('', `<i>${L.why(esc(t.offers[t.recommended].label))}: ${esc(t.reason)}</i>`);
@@ -312,8 +314,9 @@ async function tripCard(env, chat, L, lang, t) {
     lines.push('', `<b>${L.bookingTitle}: ${esc(o.label)}</b> · ${esc(money(o, lang))}`,
       `${L.flight}: ${esc([o.airline, o.outbound, o.stops].filter(Boolean).join(' · ') || L.notStated)}`);
     if (o.return) lines.push(`${L.back}: ${esc(o.return)}`);
-    lines.push(`${L.hotel}: ${esc([o.hotel, o.distance].filter(Boolean).join(' · ') || L.notStated)}`,
-      `${L.cancellation}: ${esc(refundWord(o.refund, lang))}${o.refund_note ? ` (${esc(o.refund_note)})` : ''}`);
+    lines.push(`${L.hotel}: ${esc([o.hotel, o.distance].filter(Boolean).join(' · ') || L.notStated)}`);
+    if (o.baggage) lines.push(`${L.baggage}: ${esc(o.baggage)}`);
+    lines.push(`${L.cancellation}: ${esc(refundWord(o.refund, lang))}${o.refund_note ? ` (${esc(o.refund_note)})` : ''}`);
   }
   if (t.flight_at) lines.push(`🛫 ${fmtLocal(env, t.flight_at, lang)}`);
   if (t.status === 'sent' && t.due_at) lines.push('', L.agentDue(fmtLocal(env, t.due_at, lang)));
