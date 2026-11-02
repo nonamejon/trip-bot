@@ -10,7 +10,7 @@
 import {
   MIN, DAY, one, all, run, logEvent, getTrip, activeTrip, createTrip, saveTrip, setStatus, WITH_AGENT, OPEN, code,
   fmtLocal, hmLocal, dshort, localToUtc, localISODate, addDaysISO, nights, esc, money, refundWord, b64, encrypt, decrypt,
-  getLang, setLang, strings, getMode, setMode, clearMode,
+  getLang, setLang, strings, getMode, setMode, clearMode, logChat, recentChat,
 } from './util.js';
 import { tg, tgUpload, send, typing, whileTyping, kb, replyKb, download } from './telegram.js';
 import { parseRequest, parseOffers, transcribe, routeMessage, parseWhen } from './gemini.js';
@@ -19,7 +19,7 @@ import { tripIcs } from './files.js';
 import { O, AL, agentLang, PICK_TEXT, PICK_BUTTONS, COMMANDS, KB_TRIPS, KB_SEC } from './i18n.js';
 import { secMenu, addEvent, addReminder, showAgenda, listReminders, doTranslate, doLetter, doRevise, handleSecCallback } from './secretary.js';
 
-const REQUIRED = ['destination', 'date_from', 'date_to', 'travelers'];
+const REQUIRED = ['destination', 'date_from', 'date_to', 'travelers', 'baggage'];
 const FIELD_KEYS = ['origin', 'destination', 'date_from', 'date_to', 'travelers', 'traveler_names', 'flight_pref', 'baggage', 'hotel', 'budget', 'notes'];
 const isDate = (s) => /^\d{4}-\d{2}-\d{2}$/.test(s || '');
 const isTime = (s) => /^\d{2}:\d{2}$/.test(s || '');
@@ -49,7 +49,7 @@ export function templateText(env, t) {
     `${A.dates}: ${dshort(f.date_from, al)} – ${dshort(f.date_to, al)}${n != null ? ` (${A.nights(n)})` : ''}`,
     `${A.travelers}: ${f.travelers}${f.traveler_names ? ` (${f.traveler_names})` : ''}`,
     `${A.flight}: ${f.flight_pref || A.noPref}`,
-    `${A.baggage}: ${f.baggage || '1 x 23 kg'}`,
+    `${A.baggage}: ${f.baggage || A.notSet}`,
     `${A.hotel}: ${f.hotel || A.noPref}`,
     `${A.budget}: ${f.budget || A.notSet}`,
     f.notes ? `${A.notes}: ${f.notes}` : null,
@@ -57,15 +57,16 @@ export function templateText(env, t) {
   ].filter(Boolean).join('\n');
 }
 
+// The request card. Missing required items show ❓ (the bot asks for them under the card).
 function draftText(L, lang, t) {
-  const f = t.fields, n = nights(f.date_from, f.date_to);
+  const f = t.fields, n = nights(f.date_from, f.date_to), Q = '❓';
   return [
     `<b>${L.checkTitle}</b> · ${t.code}`, '',
-    `${L.route}: ${esc(f.origin || L.origin)} → ${esc(f.destination)}`,
-    `${L.dates}: ${dshort(f.date_from, lang)} – ${dshort(f.date_to, lang)}${n != null ? ` (${L.nights(n)})` : ''}`,
-    `${L.travelers}: ${esc(f.travelers)}${f.traveler_names ? ` (${esc(f.traveler_names)})` : ''}`,
+    `${L.route}: ${esc(f.origin || L.origin)} → ${f.destination ? esc(f.destination) : Q}`,
+    `${L.dates}: ${f.date_from ? dshort(f.date_from, lang) : Q} – ${f.date_to ? dshort(f.date_to, lang) : Q}${n != null ? ` (${L.nights(n)})` : ''}`,
+    `${L.travelers}: ${f.travelers ? esc(f.travelers) : Q}${f.traveler_names ? ` (${esc(f.traveler_names)})` : ''}`,
     `${L.flight}: ${esc(f.flight_pref || L.noPref)}`,
-    `${L.baggage}: ${esc(f.baggage || '1 x 23 kg')}`,
+    `${L.baggage}: ${f.baggage ? esc(f.baggage) : Q}`,
     `${L.hotel}: ${esc(f.hotel || L.noPref)}`,
     `${L.budget}: ${esc(f.budget || L.notSet)}`,
     f.notes ? `${L.notes}: ${esc(f.notes)}` : null, '',
@@ -173,15 +174,26 @@ export async function handleOwnerMessage(env, msg) {
   const isVoice = media.length > 0 && /^(audio|video)\//.test(media[0].mime);
 
   // A button asked for this message (translate mode, a letter, a note for the agent, ...)
+  // Conversation memory: the recent chat (read before this message is logged), and this message.
+  const history = await recentChat(env, uid);
+  const kind = msg.voice || msg.audio ? '[voice note]' : msg.video_note ? '[video message]' : msg.photo ? '[photo]' : msg.document ? `[file ${msg.document.file_name || ''}]` : '';
+  const logId = await logChat(env, uid, 'in', [kind, text].filter(Boolean).join(' '));
+
   const mode = await getMode(env, uid);
   if (mode && mode.mode !== 'clarify') return handleMode(env, msg, uid, chat, L, lang, mode, text, media, isVoice);
 
   // Otherwise Gemini decides what the message is for.
   const t = await activeTrip(env, uid);
   let r;
-  try { r = await whileTyping(env, chat, () => routeMessage(env, text, media, { lang, trip: t && { code: t.code, status: t.status, destination: t.fields.destination }, pending: mode?.arg || null })); }
-  catch (e) { await reportError(env, e, 'routeMessage'); return send(env, chat, L.readFail); }
+  try { r = await whileTyping(env, chat, () => routeMessage(env, text, media, { lang, trip: t && { code: t.code, status: t.status, destination: t.fields.destination }, pending: mode?.arg || null, history })); }
+  catch (e) {
+    await reportError(env, e, 'routeMessage');
+    // While a trip request is being filled in, a message that could not be routed is most likely part of it.
+    if (t && ['collecting', 'draft'].includes(t.status) && !isVoice) return buildRequest(env, uid, chat, t, text, media, L, lang, null, history);
+    return send(env, chat, L.readFail);
+  }
   if (mode) await clearMode(env, uid);
+  if (r.transcript && logId) await run(env, 'UPDATE chat_log SET text = ? WHERE id = ?', `${kind} ${r.transcript}`.slice(0, 2000), logId);
   const said = text || r.transcript || '';
   const askAgain = async (question) => { await setMode(env, uid, 'clarify', mode?.arg ? `${mode.arg}\n${said}` : said); return send(env, chat, esc(question)); };
   // For a voice note, the router already transcribed it; later steps get the transcript instead of the audio.
@@ -190,10 +202,10 @@ export async function handleOwnerMessage(env, msg) {
   await logEvent(env, 'owner', 'route', t?.id ?? null, r.intent);
 
   switch (r.intent) {
-    case 'trip': return buildRequest(env, uid, chat, t && ['collecting', 'draft'].includes(t.status) ? t : null, useText, useMedia, L, lang, isVoice ? r.transcript : null);
+    case 'trip': return buildRequest(env, uid, chat, t && ['collecting', 'draft'].includes(t.status) ? t : null, useText, useMedia, L, lang, isVoice ? r.transcript : null, history);
     case 'trip_note': {
       const row = await one(env, `SELECT id FROM trips WHERE owner_id = ? AND status IN ('sent', 'offers', 'chosen', 'booked') ORDER BY id DESC LIMIT 1`, uid);
-      if (!row) return buildRequest(env, uid, chat, t && ['collecting', 'draft'].includes(t.status) ? t : null, useText, useMedia, L, lang, isVoice ? r.transcript : null);
+      if (!row) return buildRequest(env, uid, chat, t && ['collecting', 'draft'].includes(t.status) ? t : null, useText, useMedia, L, lang, isVoice ? r.transcript : null, history);
       return noteToAgent(env, msg, await getTrip(env, row.id), chat, L, said, media);
     }
     case 'trip_status': return send(env, chat, t ? statusText(env, L, lang, t) : L.noTripTell);
@@ -324,28 +336,32 @@ function offersMessage(env, t, L, lang) {
 }
 
 // heardText: transcript of a voice note, when the router already made one.
-async function buildRequest(env, uid, chat, t, text, media, L, lang, heardText = null) {
+// history: recent conversation; heardText: transcript of a voice note (logged, not echoed back).
+async function buildRequest(env, uid, chat, t, text, media, L, lang, heardText = null, history = '') {
   if (!t) t = await createTrip(env, uid);
   let r;
-  try { r = await whileTyping(env, chat, () => parseRequest(env, t.fields, text, media, lang)); }
+  try { r = await whileTyping(env, chat, () => parseRequest(env, t.fields, text, media, lang, history)); }
   catch (e) { await reportError(env, e, 'parseRequest'); return send(env, chat, L.readFail); }
 
+  // Take Gemini's values, then drop anything that cannot be right.
   for (const k of FIELD_KEYS) if (r[k] != null && r[k] !== '') t.fields[k] = r[k];
-  for (const k of ['date_from', 'date_to']) if (t.fields[k] && !/^\d{4}-\d{2}-\d{2}$/.test(t.fields[k])) delete t.fields[k];
+  for (const k of ['date_from', 'date_to']) if (t.fields[k] && !isDate(t.fields[k])) delete t.fields[k];
+  if (t.fields.date_from && t.fields.date_to && t.fields.date_to < t.fields.date_from) delete t.fields.date_to;
+  if (t.fields.travelers != null && !(Number.isInteger(+t.fields.travelers) && +t.fields.travelers >= 1 && +t.fields.travelers <= 20)) delete t.fields.travelers;
   t.fields.origin ||= L.origin;
-  t.fields.baggage ||= '1 x 23 kg';
-  await logEvent(env, 'owner', 'request_input', t.id, { text, media: media.map((m) => m.mime), transcript: heardText || r.transcript || null });
+  await logEvent(env, 'owner', 'request_input', t.id, { text, media: media.map((m) => m.mime), transcript: heardText || r.transcript || null, fields: t.fields });
 
-  const tr = heardText || r.transcript;
-  const heard = tr ? `<i>${L.heard}: «${esc(tr)}»</i>\n\n` : '';
   const missing = REQUIRED.filter((k) => !t.fields[k]);
   if (missing.length) {
+    // Show everything understood so far, then ask for all missing items in one message.
     if (t.status !== 'collecting') await setStatus(env, t, 'collecting', 'owner'); else await saveTrip(env, t);
-    return send(env, chat, heard + esc(r.question || L.needMore(missing.map((k) => L.field[k]).join(', '))));
+    const optional = !t.fields.flight_pref && !t.fields.hotel ? `\n${L.optionalHint}` : '';
+    return send(env, chat, `${draftText(L, lang, t)}\n\n<b>${L.askMissing(missing.filter((k) => k !== 'date_to' || !missing.includes('date_from')).map((k) => L.field[k]).join(', '))}</b>${optional}`,
+      kb([[[L.btnCancel, `cx:${t.id}`]]]));
   }
   t.draft_at = Date.now(); t.nudged = 0;
   await setStatus(env, t, 'draft', 'owner');
-  return send(env, chat, heard + draftText(L, lang, t), kb([[[L.btnApprove, `ap:${t.id}`]], [[L.btnEdit, `ed:${t.id}`], [L.btnCancel, `cx:${t.id}`]]]));
+  return send(env, chat, draftText(L, lang, t), kb([[[L.btnApprove, `ap:${t.id}`]], [[L.btnEdit, `ed:${t.id}`], [L.btnCancel, `cx:${t.id}`]]]));
 }
 
 // ======================= commands =======================
@@ -358,6 +374,7 @@ async function ownerCommand(env, msg, text) {
 
   if (isAdmin(env, uid) && ADMIN[c]) return ADMIN[c](env, chat, arg);
   if (!isOwner(env, uid)) return;
+  await logChat(env, uid, 'in', c === '/passport' ? '/passport (hidden)' : text);
 
   if (c === '/uz' || c === '/ru') return chooseLanguage(env, uid, chat, c.slice(1));
   if (c === '/lang' || c === '/language') return askLanguage(env, chat);
@@ -449,6 +466,8 @@ export async function handleCallback(env, cq) {
   if (!isOwner(env, uid)) return answer(L.notAllowed);
 
   const [a, idStr, argStr] = data.split(':');
+  const label = (cq.message?.reply_markup?.inline_keyboard || []).flat().find((b) => b.callback_data === data)?.text;
+  await logChat(env, uid, 'in', `[tapped: ${label || data}]`);
   if (a === 'lg') { await answer(); await dropKeyboard(); return chooseLanguage(env, uid, chat, idStr); }
   if (a === 'nt') { await answer(); return send(env, chat, L.whereWhenVoice); }
   if (a === 'mt') { await answer(); return myTrips(env, L, lang, uid, chat); }
@@ -481,7 +500,7 @@ export async function handleCallback(env, cq) {
   }
 
   const t = await getTrip(env, +idStr);
-  const need = { ap: 'draft', ed: 'draft', cx: 'draft', ch: 'offers', ot: 'offers' }[a];
+  const need = { ap: 'draft', ed: 'draft', ch: 'offers', ot: 'offers' }[a];
   if (!t || t.owner_id !== uid || (need && t.status !== need) || (['cy', 'cn'].includes(a) && !['collecting', ...WITH_AGENT, 'draft'].includes(t.status))) {
     await answer(L.staleBtn);
     return dropKeyboard();
@@ -493,7 +512,7 @@ export async function handleCallback(env, cq) {
     case 'ed':
       await setStatus(env, t, 'collecting', 'owner');
       return send(env, chat, L.editWhat);
-    case 'cx': case 'cy': return cancelTrip(env, t, 'owner');
+    case 'cx': case 'cy': return ['collecting', 'draft'].includes(t.status) || a === 'cy' ? cancelTrip(env, t, 'owner') : askCancel(env, t);
     case 'cn': return send(env, chat, L.nothingChanged);
     case 'ch': return choose(env, t, +argStr);
     case 'ot': return otherOptions(env, t);
@@ -713,6 +732,7 @@ export async function runChecks(env) {
   }
 
   await run(env, 'DELETE FROM updates WHERE ts < ?', now - 2 * DAY);
+  await run(env, 'DELETE FROM chat_log WHERE ts < ?', now - 30 * DAY);
 }
 
 export { mirror };

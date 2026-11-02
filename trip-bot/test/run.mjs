@@ -31,7 +31,7 @@ const env = {
 };
 
 // ---------- fake Telegram + Gemini ----------
-let lastGeminiMime = null;
+let lastGeminiMime = null, lastParsePrompt = '';
 let msgId = 100, offersRound = 0, failNextGemini = false;
 const sent = [];
 const geminiCalls = [];
@@ -64,9 +64,11 @@ globalThis.fetch = async (url, init = {}) => {
       out = { date: localISO(3), time: '07:40' };
     } else if (prompt.includes('parsing step') && prompt.includes('executive')) {
       geminiCalls.push('parseRequest' + (hasMedia ? '+audio' : ''));
-      out = prompt.includes('Dubai')
-        ? { destination: 'Dubai', origin: 'Tashkent', question: 'Which dates, and is it just you?' }
-        : { transcript: hasMedia ? "Istanbulga 12-noyabr ertalab uchishim kerak, 3 kunga." : null, origin: 'Tashkent', destination: 'Istanbul', date_from: '2026-11-12', date_to: '2026-11-15', travelers: 1, flight_pref: 'morning, direct', baggage: '1 x 23 kg', hotel: 'Levent, near the meeting', budget: null, notes: null, question: null };
+      lastParsePrompt = prompt;
+      const nm = (prompt.match(/His new message: "{3}([\s\S]*?)"{3}/) || [])[1] || '';
+      out = /Dubai/.test(nm)
+        ? { destination: 'Dubai', origin: 'Tashkent', travelers: /45/.test(nm) ? 45 : null }
+        : { transcript: hasMedia ? "Istanbulga 12-noyabr ertalab uchishim kerak, 3 kunga." : null, origin: 'Tashkent', destination: 'Istanbul', date_from: '2026-11-12', date_to: '2026-11-15', travelers: 1, flight_pref: 'morning, direct', baggage: /kg/.test(nm) ? '23 kg' : null, hotel: 'Levent, near the meeting', budget: null, notes: null };
     } else if (prompt.startsWith('You are a travel agent in Tashkent. Today')) {
       geminiCalls.push('mockAgentOffers');
       out = '1) HY 271 12.11 07:40-10:55 direct... 1450 USD free cancel\n2) TK 371 ... 1120 USD\n3) PC via Ankara ... 890 USD non-refundable';
@@ -179,6 +181,7 @@ const lastKb = () => { const m = sent.filter((x) => x.method === 'sendMessage').
 assert(lastKb().includes('lg:uz') && lastKb().includes('lg:ru'), 'first message asks for a language with flag buttons');
 await say('/start'); show('/start');
 assert(lastKb().includes('lg:uz') && lastKb().includes('🇷🇺'), '/start asks for a language');
+
 await tap('lg:uz'); show('picked Uzbek');
 assert(sqlite.prepare('SELECT lang FROM prefs WHERE telegram_id = 111').get()?.lang === 'uz', 'language saved');
 assert(sent.some((x) => x.method === 'setMyCommands' && x.p.scope?.chat_id === 111 && x.p.commands[0].description === 'Asosiy menyu'), 'command menu set to Uzbek for this chat');
@@ -188,11 +191,17 @@ const trav = sqlite.prepare('SELECT passport_enc FROM travelers').get();
 assert(trav.passport_enc.startsWith('v1:') && !trav.passport_enc.includes('FA1234567'), 'passport stored encrypted');
 
 await say('Need to go to Dubai'); show('vague request');
-assert(status().status === 'collecting', 'vague request stays collecting and asks a question');
+assert(status().status === 'collecting', 'vague request stays collecting');
+assert(lastText().includes('Dubai') && lastText().includes('❓') && lastText().includes('bagaj'), 'first request shows the card with ❓ and asks for everything missing at once');
+await say('Dubai, 45 people'); show('impossible traveler count');
+assert(lastParsePrompt.includes('Azizbek: Need to go to Dubai') && lastParsePrompt.includes('Bot: '), 'Gemini gets the recent conversation (both sides)');
+assert(sqlite.prepare('SELECT fields FROM trips ORDER BY id DESC').get().fields.indexOf('"travelers"') === -1, 'an impossible traveler count is dropped and asked again');
 await say('cancel'); show('cancel while collecting');
 
 await voice(); show('voice note');
-assert(status().status === 'draft', 'voice note produced a draft');
+assert(status().status === 'collecting' && lastText().includes('bagaj') && !lastText().includes('Eshitdim'), 'voice note: card shown, baggage asked, the voice note is not echoed back');
+await say('1 ta chamadon, 23 kg'); show('baggage answer');
+assert(status().status === 'draft' && lastText().includes('23 kg'), 'baggage answer completes the request');
 const audioCalls = () => geminiCalls.filter((c) => c === 'route+audio').length;
 let before = audioCalls();
 await update({ message: { message_id: ++msgId, from: owner, chat: { id: 111, type: 'private' }, document: { file_id: 'M4A1', file_name: 'note.m4a', mime_type: 'audio/x-m4a', file_size: 50000 } } });
@@ -255,7 +264,7 @@ sqlite.prepare('DELETE FROM reminders').run();
 failNextGemini = true;
 await say('/ru'); show('/ru');
 assert(sqlite.prepare('SELECT lang FROM prefs WHERE telegram_id = 111').get()?.lang === 'ru', 'switched to Russian');
-await say('Istanbul again please, same as before'); show('second trip');
+await say('Istanbul again please, same as before, 23 kg'); show('second trip');
 assert(sent.filter((x) => x.method === 'sendMessage').at(-1).p.text.includes('Проверьте заявку'), 'draft card in Russian');
 const t2 = status().id;
 assert(geminiCalls.includes('503') && status().status === 'draft', 'Gemini 503 -> retried and succeeded');
@@ -381,6 +390,7 @@ const tzE = { TZ_OFFSET_MIN: '300' };
 assert(nextDue(tzE, Date.parse('2027-01-31T04:00:00Z'), 'monthly') === Date.parse('2027-02-28T04:00:00Z'), 'monthly repeat keeps to the month end');
 assert(nextDue(tzE, Date.parse('2026-11-06T04:00:00Z'), 'weekdays') === Date.parse('2026-11-09T04:00:00Z'), 'weekday repeat skips the weekend');
 
+assert(sqlite.prepare(`SELECT COUNT(*) c FROM chat_log WHERE dir = 'out'`).get().c > 50 && sqlite.prepare(`SELECT COUNT(*) c FROM chat_log WHERE text LIKE '%FA1234567%'`).get().c === 0, 'both sides of the chat are logged, the passport never');
 assert(tgErrors.length === 0, 'Telegram would accept every message' + (tgErrors.length ? ': ' + tgErrors.join(' | ') : ''));
 
 console.log('\nGemini calls:', geminiCalls.join(', '));

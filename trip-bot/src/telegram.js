@@ -32,8 +32,17 @@ export async function download(env, fileId) {
   return new Uint8Array(await r.arrayBuffer());
 }
 
-export const send = (env, chatId, text, extra = {}) =>
-  tg(env, 'sendMessage', { chat_id: chatId, text, parse_mode: 'HTML', disable_web_page_preview: true, ...extra });
+export async function send(env, chatId, text, extra = {}) {
+  const m = await tg(env, 'sendMessage', { chat_id: chatId, text, parse_mode: 'HTML', disable_web_page_preview: true, ...extra });
+  // Keep the bot's side of the owner's conversation (with its buttons) for context and debugging.
+  if (env.DB && String(chatId) === String(env.OWNER_ID)) {
+    const btns = (extra.reply_markup?.inline_keyboard || []).flat().map((b) => b.text);
+    const plain = String(text).replace(/<[^>]+>/g, '').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
+    await env.DB.prepare('INSERT INTO chat_log (owner_id, dir, text, ts) VALUES (?, ?, ?, ?)')
+      .bind(Number(chatId), 'out', (plain + (btns.length ? `\n[buttons: ${btns.join(' | ')}]` : '')).slice(0, 2000), Date.now()).run().catch(() => {});
+  }
+  return m;
+}
 
 export const typing = (env, chatId) => tg(env, 'sendChatAction', { chat_id: chatId, action: 'typing' }).catch(() => {});
 

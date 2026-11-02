@@ -44,6 +44,16 @@ CREATE TABLE IF NOT EXISTS prefs (
   brief_date  TEXT                                -- last local date the morning brief was sent
 );
 
+-- The conversation with the owner (both directions), kept 30 days: context for Gemini and for debugging
+CREATE TABLE IF NOT EXISTS chat_log (
+  id       INTEGER PRIMARY KEY AUTOINCREMENT,
+  owner_id INTEGER NOT NULL,
+  dir      TEXT NOT NULL,                         -- in (from him) | out (from the bot)
+  text     TEXT NOT NULL,
+  ts       INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS chat_log_owner ON chat_log(owner_id, id);
+
 -- Personal secretary: calendar events
 CREATE TABLE IF NOT EXISTS cal_events (
   id         INTEGER PRIMARY KEY AUTOINCREMENT,

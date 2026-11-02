@@ -374,3 +374,11 @@ COMMANDS.ru.splice(0, COMMANDS.ru.length,
 // Labels of the bottom keyboard in every language, to recognise a tap whatever language is set.
 export const KB_TRIPS = new Set(LANGS.map((l) => O[l].kbTrips));
 export const KB_SEC = new Set(LANGS.map((l) => O[l].kbSec));
+
+// Trip request: what the bot asks for itself (not Gemini), from what is really missing.
+O.uz.field.baggage = 'bagaj (necha kg?)';
+O.ru.field.baggage = 'багаж (сколько кг?)';
+O.uz.askMissing = (list) => `Aniqlashtirib bering: ${list}.`;
+O.ru.askMissing = (list) => `Уточните, пожалуйста: ${list}.`;
+O.uz.optionalHint = 'Xohlasangiz, reys vaqti va mehmonxona boʻyicha istaklaringizni ham yozing.';
+O.ru.optionalHint = 'Если хотите, напишите и пожелания по времени рейса и отелю.';

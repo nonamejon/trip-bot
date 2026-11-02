@@ -2,6 +2,7 @@
 // and SQLite stands in for D1. Every reply is checked against Telegram's rules and written to a report.
 //
 //   GEMINI_API_KEY=... node test/live.mjs [voice-dir] [report.md]
+//   SCENARIO=intake ... : only the trip-request conversations that went wrong in real use (multi-turn, corrections)
 //
 // voice-dir (optional) holds trip.ogg and remind.ogg: Uzbek voice notes used as real voice messages.
 
@@ -99,6 +100,32 @@ const voice = (name) => { files[name] = fs.readFileSync(`${voiceDir}/${name}.ogg
 const doc = (id, bytes, name, mime, caption) => { files[id] = bytes; return step(`» 📄 ${name}${caption ? ' — ' + caption : ''}`, { message: { message_id: ++msgId, from: owner, chat: { id: 111, type: 'private' }, caption, document: { file_id: id, file_name: name, mime_type: mime, file_size: bytes.length } } }); };
 const trip = () => sqlite.prepare('SELECT * FROM trips ORDER BY id DESC LIMIT 1').get();
 const lastButtons = () => { const m = sent.filter((x) => x.method === 'sendMessage' && x.p.reply_markup).at(-1); return (m?.p.reply_markup.inline_keyboard || []).flat().map((b) => b.callback_data); };
+
+// ---------- trip-request conversations from real use ----------
+const fields = () => JSON.parse(trip()?.fields || '{}');
+if (process.env.SCENARIO === 'intake') {
+  const expect = (cond, what) => { report.push(`\n**${cond ? 'OK' : 'WRONG'}:** ${what} — ${JSON.stringify(fields())}\n`); console.log(`   ${cond ? 'OK   ' : 'WRONG'} ${what}`); };
+  await say('/start'); await tap('lg:uz', 'Oʻzbekcha');
+  await say('Istanbulga 12-dan 15-noyabrgacha, 3 kun, bir kishilik.');
+  expect(fields().destination && fields().date_from?.endsWith('-11-12') && fields().date_to?.endsWith('-11-15') && fields().travelers === 1 && !fields().baggage, 'first message: Istanbul, 12-15 Nov, 1 person; only baggage asked');
+  await say('Bagaj 10 kilo');
+  expect(trip().status === 'draft' && /10/.test(fields().baggage || ''), 'baggage answer completes it');
+  await say('Nimaga yoʻlovchilar sonini 13 ta deb yozib qoʻyibsan?');
+  expect(fields().travelers === 1, 'complaint about "13" does not change the count');
+  await tap(`cx:${trip().id}`, 'Bekor qilish');
+  await say('Istanbulga 5-noyabrdan bir haftalik');
+  expect(fields().date_from?.endsWith('-11-05') && fields().date_to?.endsWith('-11-12') && !fields().travelers, 'a week from 5 Nov; travelers asked, not guessed');
+  await say('Uch kishi.');
+  expect(fields().travelers === 3, 'three people');
+  await say("Reja o'zgardi, bir haftalikka emas, 10 kunlik qil.");
+  expect(fields().date_to?.endsWith('-11-15'), '10 days -> back 15 Nov');
+  await say("Bo'ldi, qolganlar kelolmaydi.");
+  expect(fields().travelers === 1, 'the others cannot come -> 1 person');
+  await say('faqat qoʻl yuki');
+  expect(trip().status === 'draft' && fields().baggage, 'hand luggage only -> complete');
+  fs.writeFileSync(reportPath, report.join('\n'));
+  process.exit(0);
+}
 
 // ---------- a day of use ----------
 await say('/start');

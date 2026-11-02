@@ -71,23 +71,31 @@ const REQUEST_SCHEMA = {
   properties: {
     transcript: S(), origin: S(), destination: S(), date_from: S(), date_to: S(),
     travelers: { type: 'INTEGER', nullable: true }, traveler_names: S(), flight_pref: S(),
-    baggage: S(), hotel: S(), budget: S(), notes: S(), question: S(),
+    baggage: S(), hotel: S(), budget: S(), notes: S(),
   },
 };
 
-export function parseRequest(env, draft, text, media, lang = 'uz') {
+// history: the recent conversation (util.recentChat), so earlier answers and the bot's questions are known.
+export function parseRequest(env, draft, text, media, lang = 'uz', history = '') {
   const S = style(lang);
-  const prompt = `You are the parsing step of a Telegram travel assistant for one executive, Azizbek, based in Tashkent. Today is ${localISODate(env)}.
+  const prompt = `You are the parsing step of a Telegram travel assistant for one executive, Azizbek, based in Tashkent. ${nowLine(env)}
 He writes or speaks in Uzbek, Russian or English, sometimes mixed.${media.length ? ' His message includes the attached file (a voice note, photo or document); read or transcribe it.' : ''}
 
-Current draft request (JSON, may be empty): ${JSON.stringify(draft)}
-His message text: """${text || '(none, see attachment)'}"""
+Recent conversation with the bot, oldest first (the bot's lines show what it already understood and what it asked):
+"""${history || '(none)'}"""
 
-Merge the message into the draft and return JSON with these fields:
-transcript: if there is a voice note, its transcript in the original language; else null.
-origin (default "${S.origin}"), destination, date_from and date_to ("YYYY-MM-DD"), travelers (number), traveler_names, flight_pref, baggage (default "1 x 23 kg"), hotel (his hotel wishes, short), budget, notes.
-question: one short friendly question in ${S.name}, ${S.polite}, asking for ALL still-missing required fields (destination, date_from, date_to, travelers) at once; null if none are missing.
-Rules: keep draft values unless he changes them. If he gives a length ("3 days", "3 kunga") compute date_to from date_from. Resolve relative dates ("next Monday") from today. If he says he travels alone, travelers = 1. Never invent a destination, dates or traveler count. Write field values in ${S.name}, using ${S.places}.`;
+The trip request so far (JSON, may be empty): ${JSON.stringify(draft)}
+His new message: """${text || '(none, see attachment)'}"""
+
+Return the complete, updated trip request as JSON:
+- destination: the city (add the country only if unclear).
+- origin: where he flies from; "${S.origin}" unless he says otherwise.
+- date_from, date_to: ALWAYS digits "YYYY-MM-DD", even though other values are in ${S.name}. "12-15 noyabr" / "с 12 по 15 ноября" means date_from = the 12th and date_to = the 15th. A length ("3 kunga", "на неделю") counts from date_from. Use the nearest future date.
+- travelers: the number of people travelling, ONLY if he says it ("yolgʻiz", "bir kishilik", "1 kishi", "вдвоём", "3 kishi"). Numbers in dates, times, prices or lengths of stay are never the traveler count. null if he has not said.
+- baggage: ONLY what he says ("23 kg", "10 kilo", "faqat qoʻl yuki"); null if he has not said. Never assume a default.
+- traveler_names, flight_pref (time of day, direct or not, class), hotel (his wishes, short), budget, notes: only what he says.
+- transcript: if there is a voice note, its transcript in the original language; else null.
+Keep earlier values unless he changes or corrects them; a correction always wins. If he complains that a value is wrong, fix that value. Never invent anything. Text values in ${S.name}, using ${S.places}.`;
   return gemini(env, { prompt, media, schema: REQUEST_SCHEMA });
 }
 
@@ -168,14 +176,16 @@ const ROUTE_SCHEMA = {
   required: ['intent'],
 };
 
-// ctx: { lang, trip: { code, status, destination } | null, pending: earlier unfinished message or null }
+// ctx: { lang, trip: { code, status, destination } | null, pending: earlier unfinished message or null, history: recent chat }
 export function routeMessage(env, text, media, ctx) {
   const L = LANG_NAME[ctx.lang] || LANG_NAME.uz;
+  const hist = ctx.history ? `Recent conversation with the bot, oldest first:\n"""${ctx.history}"""\n` : '';
   const trip = ctx.trip ? `His current trip: ${ctx.trip.code} to ${ctx.trip.destination || '(destination not given yet)'}, status "${ctx.trip.status}" (collecting = the bot is still asking him for trip details; draft = waiting for his approval; sent/offers/chosen/booked = the travel agent is working on it).` : 'He has no trip in progress.';
   const prompt = `You route messages for a Telegram assistant of one executive, Azizbek, based in Tashkent. It is his travel assistant and personal secretary.
 ${nowLine(env)}
 He writes or speaks in Uzbek, Russian or English, sometimes mixed.${media.length ? ' His message includes the attached file (voice note, photo or document); listen to it or read it.' : ''}
 ${trip}
+${hist}
 ${ctx.pending ? `His previous message was not complete and you asked him a question about it: """${ctx.pending}""". If this message answers it, combine both.` : ''}
 
 His message: """${text || '(none, see attachment)'}"""
@@ -203,7 +213,7 @@ agenda: ag_from and ag_to "YYYY-MM-DD" (today if he does not say).
 Resolve relative dates and times from now, in Tashkent time.
 question: if an event or reminder has no date or time you can work out, one short question in ${L} asking only for that; else null.
 reply: for chat, a short answer in ${L}; else null.`;
-  return gemini(env, { prompt, media, schema: ROUTE_SCHEMA, thinking: 'low', timeoutMs: 20000 });
+  return gemini(env, { prompt, media, schema: ROUTE_SCHEMA, thinking: 'low', timeoutMs: 25000 });
 }
 
 // ---------- 5. Translation ----------

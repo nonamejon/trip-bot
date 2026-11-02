@@ -151,6 +151,19 @@ export async function decrypt(env, blob) {
   return new TextDecoder().decode(pt);
 }
 
+// ---------- conversation log (context for Gemini, and for debugging) ----------
+const plain = (s) => String(s).replace(/<[^>]+>/g, '').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
+export async function logChat(env, uid, dir, text) {
+  if (!text) return null;
+  const r = await run(env, 'INSERT INTO chat_log (owner_id, dir, text, ts) VALUES (?, ?, ?, ?)', uid, dir, plain(text).slice(0, 2000), Date.now());
+  return r.meta?.last_row_id ?? null;
+}
+// The last messages of the past day, oldest first, as "Azizbek: …" / "Bot: …" lines. Small on purpose (about 20 lines).
+export async function recentChat(env, uid, limit = 20) {
+  const rows = await all(env, 'SELECT dir, text FROM chat_log WHERE owner_id = ? AND ts > ? ORDER BY id DESC LIMIT ?', uid, Date.now() - DAY, limit);
+  return rows.reverse().map((r) => `${r.dir === 'in' ? 'Azizbek' : 'Bot'}: ${r.text.slice(0, 600)}`).join('\n');
+}
+
 // ---------- "what is the next message for" (translate mode, letter request, ...) ----------
 const MODE_TTL = 30 * MIN;
 export async function setMode(env, uid, mode, arg = null) {
