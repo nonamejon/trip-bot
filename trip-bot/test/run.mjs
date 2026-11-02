@@ -28,6 +28,7 @@ const env = {
 };
 
 // ---------- fake Telegram + Gemini ----------
+let lastGeminiMime = null;
 let msgId = 100, offersRound = 0, failNextGemini = false;
 const sent = [];
 const geminiCalls = [];
@@ -41,6 +42,7 @@ globalThis.fetch = async (url, init = {}) => {
     const body = JSON.parse(init.body);
     const prompt = body.contents[0].parts[0].text;
     const hasMedia = body.contents[0].parts.length > 1;
+    if (hasMedia) lastGeminiMime = body.contents[0].parts[1].inline_data.mime_type;
     let out;
     if (prompt.includes('parsing step') && prompt.includes('executive')) {
       geminiCalls.push('parseRequest' + (hasMedia ? '+audio' : ''));
@@ -132,6 +134,14 @@ await say('cancel'); show('cancel while collecting');
 
 await voice(); show('voice note');
 assert(status().status === 'draft', 'voice note produced a draft');
+const audioCalls = () => geminiCalls.filter((c) => c === 'parseRequest+audio').length;
+let before = audioCalls();
+await update({ message: { message_id: ++msgId, from: owner, chat: { id: 111, type: 'private' }, document: { file_id: 'M4A1', file_name: 'note.m4a', mime_type: 'audio/x-m4a', file_size: 50000 } } });
+assert(audioCalls() === before + 1 && lastGeminiMime === 'audio/mp4', 'audio sent as a file is read (m4a -> audio/mp4)');
+before = audioCalls();
+await update({ message: { message_id: ++msgId, from: owner, chat: { id: 111, type: 'private' }, video_note: { file_id: 'VN1', file_size: 300000, length: 240, duration: 8 } } });
+assert(audioCalls() === before + 1 && lastGeminiMime === 'video/mp4', 'round video message is read');
+assert(status().status === 'draft', 'still a draft after extra media');
 const tripId = status().id;
 
 await tap(`ap:${tripId}`); show('approve');

@@ -105,12 +105,24 @@ const mainMenu = () => kb([[['Plan a new trip', 'nt']], [['My trips', 'mt'], ['S
 
 // ======================= owner messages =======================
 
+// Audio sent with Attach -> File often has a vendor mime type (audio/x-m4a, audio/x-wav) or none; normalize from the extension.
+const EXT_MIME = { pdf: 'application/pdf', jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png', webp: 'image/webp', mp3: 'audio/mpeg', m4a: 'audio/mp4', aac: 'audio/aac', ogg: 'audio/ogg', oga: 'audio/ogg', opus: 'audio/ogg', wav: 'audio/wav', flac: 'audio/flac' };
+function docMime(d) {
+  const ext = (d.file_name || '').split('.').pop().toLowerCase();
+  const m = (d.mime_type || '').toLowerCase();
+  if (m === 'audio/x-m4a' || m === 'audio/m4a') return 'audio/mp4';
+  if (m === 'audio/x-wav' || m === 'audio/wave') return 'audio/wav';
+  if (m && m !== 'application/octet-stream') return m;
+  return EXT_MIME[ext] || m;
+}
+
 async function mediaOf(env, msg) {
   let fileId, mime, size;
   if (msg.voice) ({ file_id: fileId, file_size: size } = msg.voice), (mime = msg.voice.mime_type || 'audio/ogg');
   else if (msg.audio) ({ file_id: fileId, file_size: size } = msg.audio), (mime = msg.audio.mime_type || 'audio/mpeg');
   else if (msg.photo?.length) ({ file_id: fileId, file_size: size } = msg.photo[msg.photo.length - 1]), (mime = 'image/jpeg');
-  else if (msg.document && /^(application\/pdf|image\/)/.test(msg.document.mime_type || '')) ({ file_id: fileId, file_size: size, mime_type: mime } = msg.document);
+  else if (msg.video_note) ({ file_id: fileId, file_size: size } = msg.video_note), (mime = 'video/mp4');
+  else if (msg.document && /^(application\/pdf|image\/|audio\/)/.test(docMime(msg.document))) ({ file_id: fileId, file_size: size } = msg.document), (mime = docMime(msg.document));
   if (!fileId) return [];
   if (size && size > MAX_MEDIA) throw Object.assign(new Error('file too large'), { userText: 'That file is too large for me to read. Please send something under 15 MB.' });
   return [{ mime, b64: b64(await download(env, fileId)) }];
@@ -125,14 +137,14 @@ export async function handleOwnerMessage(env, msg) {
 
   let media;
   try { media = await mediaOf(env, msg); } catch (e) { if (e.userText) return send(env, chat, e.userText); throw e; }
-  if (!text && !media.length) return send(env, chat, 'I can read text, voice notes, photos and PDFs.');
+  if (!text && !media.length) return send(env, chat, 'I can read text, voice notes, audio files, round videos, photos and PDFs.');
 
   const t = await activeTrip(env, uid);
 
   // A trip is already with the agent: short commands, otherwise pass the note on.
   if (t && WITH_AGENT.includes(t.status)) {
     let said = text;
-    if (!said && media.length && media[0].mime.startsWith('audio')) { await typing(env, chat); said = await transcribe(env, media); }
+    if (!said && media.length && /^(audio|video)\//.test(media[0].mime)) { await typing(env, chat); said = await transcribe(env, media); }
     if (CANCEL.test(said)) return askCancel(env, t);
     if (STATUS.test(said)) return send(env, chat, statusText(env, t));
     await toAgent(env, t, `Note from Azizbek about ${t.code}:\n"${said || '(file attached)'}"`, 'note');
