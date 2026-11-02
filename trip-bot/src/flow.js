@@ -8,20 +8,21 @@
 // Admin output and error alerts are English.
 
 import {
-  MIN, DAY, one, all, run, logEvent, getTrip, activeTrip, createTrip, saveTrip, setStatus, WITH_AGENT, code,
-  fmtLocal, hmLocal, dshort, localToUtc, nights, esc, money, refundWord, b64, encrypt, decrypt, getLang, setLang, strings,
+  MIN, DAY, one, all, run, logEvent, getTrip, activeTrip, createTrip, saveTrip, setStatus, WITH_AGENT, OPEN, code,
+  fmtLocal, hmLocal, dshort, localToUtc, localISODate, addDaysISO, nights, esc, money, refundWord, b64, encrypt, decrypt,
+  getLang, setLang, strings, getMode, setMode, clearMode,
 } from './util.js';
-import { tg, tgUpload, send, typing, kb, download } from './telegram.js';
-import { parseRequest, parseOffers, transcribe } from './gemini.js';
+import { tg, tgUpload, send, typing, kb, replyKb, download } from './telegram.js';
+import { parseRequest, parseOffers, transcribe, routeMessage, parseWhen } from './gemini.js';
 import { toAgent, openAgentThread, mirror, isMock } from './agent.js';
 import { tripIcs } from './files.js';
-import { O, AL, agentLang, PICK_TEXT, PICK_BUTTONS, COMMANDS } from './i18n.js';
+import { O, AL, agentLang, PICK_TEXT, PICK_BUTTONS, COMMANDS, KB_TRIPS, KB_SEC } from './i18n.js';
+import { secMenu, addEvent, addReminder, showAgenda, listReminders, doTranslate, doLetter, doRevise, handleSecCallback } from './secretary.js';
 
 const REQUIRED = ['destination', 'date_from', 'date_to', 'travelers'];
 const FIELD_KEYS = ['origin', 'destination', 'date_from', 'date_to', 'travelers', 'traveler_names', 'flight_pref', 'baggage', 'hotel', 'budget', 'notes'];
-// \b does not work with Cyrillic in JS, so word starts/ends are checked with Unicode letter lookarounds.
-const CANCEL = /(?<!\p{L})(cancel|bekor|отмен)/iu;
-const STATUS = /(?<!\p{L})(status|holat|статус|qayerda|где|where)(?!\p{L})/iu;
+const isDate = (s) => /^\d{4}-\d{2}-\d{2}$/.test(s || '');
+const isTime = (s) => /^\d{2}:\d{2}$/.test(s || '');
 const MAX_MEDIA = 15 * 1024 * 1024;
 
 const isOwner = (env, id) => String(id) === String(env.OWNER_ID);
@@ -108,7 +109,8 @@ function statusText(env, L, lang, t) {
   return `<b>${esc(t.fields.destination || L.trip)}</b> · ${t.code}\n\n` + lines.join('\n');
 }
 
-const mainMenu = (L) => kb([[[L.menu[0], 'nt']], [[L.menu[1], 'mt'], [L.menu[2], 'st']]]);
+// The keyboard that stays at the bottom of the chat: the two sections.
+export const mainKb = (L) => replyKb([[L.kbTrips, L.kbSec]]);
 const route = (L, t) => `${esc(t.fields.origin || L.origin)} → ${esc(t.fields.destination)}`;
 
 // ======================= language =======================
@@ -121,7 +123,7 @@ async function chooseLanguage(env, uid, chat, lang) {
   // The command menu in this chat follows the chosen language.
   await tg(env, 'setMyCommands', { commands: COMMANDS[lang], scope: { type: 'chat', chat_id: chat } }).catch((e) => reportError(env, e, 'setMyCommands'));
   const L = O[lang];
-  return send(env, chat, `${L.langSet}\n\n${L.help}`, mainMenu(L));
+  return send(env, chat, `${L.langSet}\n\n${L.help}`, mainKb(L));
 }
 
 // ======================= owner messages =======================
@@ -161,29 +163,169 @@ export async function handleOwnerMessage(env, msg) {
   if (!lang) return askLanguage(env, chat);
   const L = O[lang];
 
+  // The two sections on the bottom keyboard
+  if (KB_TRIPS.has(text)) { await clearMode(env, uid); return tripsMenu(env, uid, chat, L, lang); }
+  if (KB_SEC.has(text)) { await clearMode(env, uid); return secMenu(env, chat, L); }
+
   let media;
   try { media = await mediaOf(env, msg, L.tooLarge); } catch (e) { if (e.userText) return send(env, chat, e.userText); throw e; }
   if (!text && !media.length) return send(env, chat, L.canRead);
+  const isVoice = media.length > 0 && /^(audio|video)\//.test(media[0].mime);
 
+  // A button asked for this message (translate mode, a letter, a note for the agent, ...)
+  const mode = await getMode(env, uid);
+  if (mode && mode.mode !== 'clarify') return handleMode(env, msg, uid, chat, L, lang, mode, text, media, isVoice);
+
+  // Otherwise Gemini decides what the message is for.
   const t = await activeTrip(env, uid);
+  await typing(env, chat);
+  let r;
+  try { r = await routeMessage(env, text, media, { lang, trip: t && { code: t.code, status: t.status, destination: t.fields.destination }, pending: mode?.arg || null }); }
+  catch (e) { await reportError(env, e, 'routeMessage'); return send(env, chat, L.readFail); }
+  if (mode) await clearMode(env, uid);
+  const said = text || r.transcript || '';
+  const askAgain = async (question) => { await setMode(env, uid, 'clarify', mode?.arg ? `${mode.arg}\n${said}` : said); return send(env, chat, esc(question)); };
+  // For a voice note, the router already transcribed it; later steps get the transcript instead of the audio.
+  const useText = isVoice && r.transcript ? r.transcript : text;
+  const useMedia = isVoice && r.transcript ? [] : media;
+  await logEvent(env, 'owner', 'route', t?.id ?? null, r.intent);
 
-  // A trip is already with the agent: short commands, otherwise pass the note on.
-  if (t && WITH_AGENT.includes(t.status)) {
-    let said = text;
-    if (!said && media.length && /^(audio|video)\//.test(media[0].mime)) { await typing(env, chat); said = await transcribe(env, media); }
-    if (CANCEL.test(said)) return askCancel(env, t);
-    if (STATUS.test(said)) return send(env, chat, statusText(env, L, lang, t));
-    const A = AL(env);
-    await toAgent(env, t, `${A.note(t.code)}\n"${said || A.fileAttached}"`, 'note');
-    if (!isMock(env) && media.length && !said) await tg(env, 'forwardMessage', { chat_id: env.AGENT_CHAT_ID, from_chat_id: chat, message_id: msg.message_id, ...(t.agent_thread_id ? { message_thread_id: t.agent_thread_id } : {}) });
-    return send(env, chat, L.passedOn);
+  switch (r.intent) {
+    case 'trip': return buildRequest(env, uid, chat, t && ['collecting', 'draft'].includes(t.status) ? t : null, useText, useMedia, L, lang, isVoice ? r.transcript : null);
+    case 'trip_note': {
+      const row = await one(env, `SELECT id FROM trips WHERE owner_id = ? AND status IN ('sent', 'offers', 'chosen', 'booked') ORDER BY id DESC LIMIT 1`, uid);
+      if (!row) return buildRequest(env, uid, chat, t && ['collecting', 'draft'].includes(t.status) ? t : null, useText, useMedia, L, lang, isVoice ? r.transcript : null);
+      return noteToAgent(env, msg, await getTrip(env, row.id), chat, L, said, media);
+    }
+    case 'trip_status': return send(env, chat, t ? statusText(env, L, lang, t) : L.noTripTell);
+    case 'trip_cancel':
+      if (!t) return send(env, chat, L.noCancel);
+      return ['collecting', 'draft'].includes(t.status) ? cancelTrip(env, t, 'owner') : askCancel(env, t);
+    case 'event':
+      if (r.question || !isDate(r.ev_date)) return askAgain(r.question || L.chatFallback);
+      return addEvent(env, uid, chat, L, lang, r);
+    case 'reminder':
+      if (r.question || !isDate(r.rm_date)) return askAgain(r.question || L.chatFallback);
+      if (!(await addReminder(env, uid, chat, L, lang, r))) return askAgain(L.reminderPast);
+      return;
+    case 'translate': {
+      const src = r.tr_text || (isVoice ? r.transcript : null);
+      return doTranslate(env, chat, L, lang, src, src ? [] : media, r.tr_target);
+    }
+    case 'letter': return doLetter(env, uid, chat, L, lang, r.lt_request || said);
+    case 'agenda': {
+      const from = isDate(r.ag_from) ? r.ag_from : localISODate(env);
+      let to = isDate(r.ag_to) && r.ag_to >= from ? r.ag_to : from;
+      if (to > addDaysISO(from, 30)) to = addDaysISO(from, 30);
+      return showAgenda(env, uid, chat, L, lang, from, to);
+    }
+    case 'reminders_list': return listReminders(env, uid, chat, L, lang);
+    default: return send(env, chat, esc(r.reply || L.chatFallback), mainKb(L));
   }
-  if (t && ['collecting', 'draft'].includes(t.status) && CANCEL.test(text) && text.length < 60) return cancelTrip(env, t, 'owner');
-
-  return buildRequest(env, uid, chat, t, text, media, L, lang);
 }
 
-async function buildRequest(env, uid, chat, t, text, media, L, lang) {
+// The next message after a button: translate it, write a letter from it, pass it to the agent, ...
+async function handleMode(env, msg, uid, chat, L, lang, mode, text, media, isVoice) {
+  if (mode.mode === 'translate') {
+    await setMode(env, uid, 'translate', mode.arg); // stay in translate mode
+    return doTranslate(env, chat, L, lang, media.length ? null : text, media, mode.arg || null);
+  }
+  let said = text;
+  if (!said && isVoice) {
+    await typing(env, chat);
+    try { said = await transcribe(env, media); } catch (e) { await reportError(env, e, 'transcribe'); return send(env, chat, L.readFail); }
+  }
+  await clearMode(env, uid);
+  switch (mode.mode) {
+    case 'letter': return said ? doLetter(env, uid, chat, L, lang, said) : send(env, chat, L.letterAsk);
+    case 'revise': return said ? doRevise(env, uid, chat, L, +mode.arg, said) : send(env, chat, L.reviseAsk);
+    case 'agent': {
+      const t = await getTrip(env, +mode.arg);
+      if (!t || t.owner_id !== uid || !WITH_AGENT.includes(t.status)) return send(env, chat, L.staleBtn);
+      return noteToAgent(env, msg, t, chat, L, said, media);
+    }
+    case 'flight_time': return setFlightTime(env, uid, chat, L, lang, +mode.arg, said);
+  }
+  return send(env, chat, L.chatFallback);
+}
+
+async function noteToAgent(env, msg, t, chat, L, said, media) {
+  const A = AL(env);
+  await toAgent(env, t, `${A.note(t.code)}\n"${said || A.fileAttached}"`, 'note');
+  // A real agent also gets the original file (voice note, photo, PDF).
+  if (!isMock(env) && media.length) await tg(env, 'forwardMessage', { chat_id: env.AGENT_CHAT_ID, from_chat_id: chat, message_id: msg.message_id, ...(t.agent_thread_id ? { message_thread_id: t.agent_thread_id } : {}) });
+  return send(env, chat, L.passedOn);
+}
+
+async function setFlightTime(env, uid, chat, L, lang, tripId, said) {
+  const t = await getTrip(env, tripId);
+  if (!t || t.owner_id !== uid) return send(env, chat, L.staleBtn);
+  let w;
+  try { w = await parseWhen(env, said || ''); } catch (e) { await reportError(env, e, 'parseWhen'); return send(env, chat, L.readFail); }
+  if (!isDate(w.date) || !isTime(w.time)) { await setMode(env, uid, 'flight_time', tripId); return send(env, chat, L.flightTimeBad); }
+  t.flight_at = localToUtc(env, `${w.date}T${w.time}`);
+  const o = t.offers[t.chosen];
+  if (o) o.outbound_datetime = `${w.date}T${w.time}`;
+  await saveTrip(env, t);
+  await run(env, 'DELETE FROM reminders WHERE trip_id = ? AND sent_at IS NULL', t.id);
+  await scheduleFlightReminders(env, t);
+  await logEvent(env, 'owner', 'flight_time', t.id, `${w.date}T${w.time}`);
+  return send(env, chat, `${L.flightTimeSet}\n\n${await tripText(env, L, lang, t)}`);
+}
+
+async function scheduleFlightReminders(env, t) {
+  if (!t.flight_at) return;
+  const now = Date.now();
+  for (const [type, at] of [['checkin', t.flight_at - DAY], ['leave', t.flight_at - 3 * 60 * MIN]]) {
+    if (at > now) await run(env, 'INSERT INTO reminders (trip_id, type, due_at) VALUES (?, ?, ?)', t.id, type, at);
+  }
+}
+
+// ======================= My trips section =======================
+
+async function tripsMenu(env, uid, chat, L, lang) {
+  const t = await activeTrip(env, uid);
+  const rows = [[[L.btnNewTrip, 'nt'], [L.btnAllTrips, 'mt']]];
+  if (t) rows.unshift([[L.btnCurrentTrip, `tv:${t.id}`]]);
+  return send(env, chat, `${L.tripsTitle}\n\n${t ? statusText(env, L, lang, t) + '\n\n' : ''}${L.tripsHint}`, kb(rows));
+}
+
+// One trip: route, dates, booking, documents, and what can be done with it now.
+async function tripCard(env, chat, L, lang, t) {
+  const f = t.fields, o = t.chosen != null ? t.offers[t.chosen] : null, n = nights(f.date_from, f.date_to);
+  const docs = await all(env, 'SELECT id FROM documents WHERE trip_id = ?', t.id);
+  const lines = [`<b>✈️ ${route(L, t)}</b> · ${t.code}`, `${L.statusLabel}: <b>${L.statusWord[t.status] || t.status}</b>`];
+  if (f.date_from) lines.push(`🗓 ${dshort(f.date_from, lang)} – ${dshort(f.date_to, lang)}${n != null ? ` (${L.nights(n)})` : ''}`);
+  if (f.travelers) lines.push(`👤 ${L.travelers}: ${esc(f.travelers)}${f.traveler_names ? ` (${esc(f.traveler_names)})` : ''}`);
+  if (o) {
+    lines.push('', `<b>${L.bookingTitle}: ${esc(o.label)}</b> · ${esc(money(o, lang))}`,
+      `${L.flight}: ${esc([o.airline, o.outbound, o.stops].filter(Boolean).join(' · ') || L.notStated)}`);
+    if (o.return) lines.push(`${L.back}: ${esc(o.return)}`);
+    lines.push(`${L.hotel}: ${esc([o.hotel, o.distance].filter(Boolean).join(' · ') || L.notStated)}`,
+      `${L.cancellation}: ${esc(refundWord(o.refund, lang))}${o.refund_note ? ` (${esc(o.refund_note)})` : ''}`);
+  }
+  if (t.flight_at) lines.push(`🛫 ${fmtLocal(env, t.flight_at, lang)}`);
+  if (t.status === 'sent' && t.due_at) lines.push('', L.agentDue(fmtLocal(env, t.due_at, lang)));
+
+  const rows = [];
+  if (t.status === 'draft') rows.push([[L.btnApprove, `ap:${t.id}`]]);
+  if (t.status === 'offers') rows.push([[L.btnOptions, `ov:${t.id}`]]);
+  if (docs.length) rows.push([[L.btnDocs(docs.length), `td:${t.id}`]]);
+  if (WITH_AGENT.includes(t.status)) rows.push([[L.btnWriteAgent, `aw:${t.id}`]]);
+  if (['booked', 'done'].includes(t.status) && o) rows.push([[L.btnTripIcs, `tc:${t.id}`]]);
+  if (t.status === 'booked' && !t.flight_at) rows.push([[L.btnFlightTime, `tf:${t.id}`]]);
+  if (OPEN.includes(t.status)) rows.push([[L.btnCancelTrip, `tx:${t.id}`]]);
+  return send(env, chat, lines.join('\n'), kb(rows));
+}
+
+function offersMessage(env, t, L, lang) {
+  const rows = t.offers.map((o, i) => [[`${i === t.recommended ? '★ ' : ''}${o.label} · ${money(o, lang)}`, `ch:${t.id}:${i}`]]);
+  rows.push([[L.btnOther, `ot:${t.id}`]]);
+  return send(env, t.owner_id, compareText(L, lang, t), kb(rows));
+}
+
+// heardText: transcript of a voice note, when the router already made one.
+async function buildRequest(env, uid, chat, t, text, media, L, lang, heardText = null) {
   if (!t) t = await createTrip(env, uid);
   await typing(env, chat);
   let r;
@@ -194,9 +336,10 @@ async function buildRequest(env, uid, chat, t, text, media, L, lang) {
   for (const k of ['date_from', 'date_to']) if (t.fields[k] && !/^\d{4}-\d{2}-\d{2}$/.test(t.fields[k])) delete t.fields[k];
   t.fields.origin ||= L.origin;
   t.fields.baggage ||= '1 x 23 kg';
-  await logEvent(env, 'owner', 'request_input', t.id, { text, media: media.map((m) => m.mime), transcript: r.transcript || null });
+  await logEvent(env, 'owner', 'request_input', t.id, { text, media: media.map((m) => m.mime), transcript: heardText || r.transcript || null });
 
-  const heard = r.transcript ? `<i>${L.heard}: «${esc(r.transcript)}»</i>\n\n` : '';
+  const tr = heardText || r.transcript;
+  const heard = tr ? `<i>${L.heard}: «${esc(tr)}»</i>\n\n` : '';
   const missing = REQUIRED.filter((k) => !t.fields[k]);
   if (missing.length) {
     if (t.status !== 'collecting') await setStatus(env, t, 'collecting', 'owner'); else await saveTrip(env, t);
@@ -223,11 +366,15 @@ async function ownerCommand(env, msg, text) {
   const lang = await getLang(env, uid);
   if (!lang) return askLanguage(env, chat); // first contact: pick a language before anything else
   const L = O[lang];
+  await clearMode(env, uid); // any command ends translate mode etc.
 
   switch (c) {
     case '/start':
     case '/help':
-      return send(env, chat, L.help, mainMenu(L));
+    case '/menu':
+      return send(env, chat, L.help, mainKb(L));
+    case '/today': { const d = localISODate(env); return showAgenda(env, uid, chat, L, lang, d, d); }
+    case '/reminders': return listReminders(env, uid, chat, L, lang);
     case '/new': return send(env, chat, L.whereWhen);
     case '/status': { const t = await activeTrip(env, uid); return send(env, chat, t ? statusText(env, L, lang, t) : L.noTripTell); }
     case '/trips': return myTrips(env, L, lang, uid, chat);
@@ -247,7 +394,10 @@ async function ownerCommand(env, msg, text) {
 async function myTrips(env, L, lang, uid, chat) {
   const rows = await all(env, 'SELECT id, status, fields FROM trips WHERE owner_id = ? ORDER BY id DESC LIMIT 10', uid);
   if (!rows.length) return send(env, chat, L.noTripsYet);
-  return send(env, chat, `<b>${L.yourTrips}</b>\n` + rows.map((r) => { const f = JSON.parse(r.fields || '{}'); return `${code(r.id)} · ${esc(f.destination || '?')} · ${dshort(f.date_from, lang)} · ${L.statusWord[r.status] || r.status}`; }).join('\n'));
+  return send(env, chat, `<b>${L.yourTrips}</b>`, kb(rows.map((r) => {
+    const f = JSON.parse(r.fields || '{}');
+    return [[`${code(r.id)} · ${f.destination || '?'} · ${dshort(f.date_from, lang)} · ${L.statusWord[r.status] || r.status}`, `tv:${r.id}`]];
+  })));
 }
 
 const ADMIN = {
@@ -306,6 +456,31 @@ export async function handleCallback(env, cq) {
   if (a === 'mt') { await answer(); return myTrips(env, L, lang, uid, chat); }
   if (a === 'st') { await answer(); const t = await activeTrip(env, uid); return send(env, chat, t ? statusText(env, L, lang, t) : L.noTrip); }
   if (a === 'doc') { await answer(); const d = await one(env, 'SELECT * FROM documents WHERE id = ?', +idStr); return d && tg(env, 'sendDocument', { chat_id: chat, document: d.file_id, caption: d.name }); }
+  if (await handleSecCallback(env, { a, id: idStr, arg: argStr, uid, chat, L, lang, answer, dropKeyboard })) return;
+
+  // My trips: a trip's card and what can be done from it
+  if (['tv', 'ov', 'td', 'aw', 'tc', 'tf', 'tx'].includes(a)) {
+    const t = await getTrip(env, +idStr);
+    if (!t || t.owner_id !== uid) return answer(L.staleBtn);
+    await answer();
+    switch (a) {
+      case 'tv': return tripCard(env, chat, L, lang, t);
+      case 'ov': return t.status === 'offers' ? offersMessage(env, t, L, lang) : tripCard(env, chat, L, lang, t);
+      case 'td': {
+        const docs = await all(env, 'SELECT * FROM documents WHERE trip_id = ? ORDER BY id', t.id);
+        if (!docs.length) return send(env, chat, L.noDocs);
+        for (const d of docs) await tg(env, 'sendDocument', { chat_id: chat, document: d.file_id, caption: d.name });
+        return;
+      }
+      case 'aw':
+        if (!WITH_AGENT.includes(t.status)) return send(env, chat, L.staleBtn);
+        await setMode(env, uid, 'agent', t.id);
+        return send(env, chat, L.agentAsk);
+      case 'tc': return tgUpload(env, 'sendDocument', { chat_id: chat, caption: L.icsCaption }, 'document', `${t.code}.ics`, tripIcs(t, t.offers[t.chosen], L), 'text/calendar');
+      case 'tf': await setMode(env, uid, 'flight_time', t.id); return send(env, chat, L.flightTimeAsk);
+      case 'tx': return OPEN.includes(t.status) ? askCancel(env, t) : send(env, chat, L.staleBtn);
+    }
+  }
 
   const t = await getTrip(env, +idStr);
   const need = { ap: 'draft', ed: 'draft', cx: 'draft', ch: 'offers', ot: 'offers' }[a];
@@ -461,9 +636,7 @@ export async function handleAgentText(env, t, text, media) {
 
   t.offers_at = Date.now(); t.nudged_offers = 0;
   if (t.status !== 'offers') await setStatus(env, t, 'offers', 'agent'); else await saveTrip(env, t);
-  const rows = offers.map((o, i) => [[`${i === t.recommended ? '★ ' : ''}${o.label} · ${money(o, lang)}`, `ch:${t.id}:${i}`]]);
-  rows.push([[L.btnOther, `ot:${t.id}`]]);
-  return send(env, t.owner_id, compareText(L, lang, t), kb(rows));
+  return offersMessage(env, t, L, lang);
 }
 
 // docs: [{ name, file_id }] from a real agent, or [{ name, bytes, mime }] from the mock agent.
@@ -486,13 +659,8 @@ export async function handleAgentDocs(env, t, docs, caption = '') {
   const back = localToUtc(env, t.fields.date_to);
   t.done_at = back != null ? back + DAY : null;
   await setStatus(env, t, 'booked', 'agent');
-  if (t.flight_at) {
-    const now = Date.now();
-    for (const [type, at] of [['checkin', t.flight_at - DAY], ['leave', t.flight_at - 3 * 60 * MIN]]) {
-      if (at > now) await run(env, 'INSERT INTO reminders (trip_id, type, due_at) VALUES (?, ?, ?)', t.id, type, at);
-    }
-  }
-  await send(env, t.owner_id, await tripText(env, L, lang, t));
+  await scheduleFlightReminders(env, t);
+  await send(env, t.owner_id, await tripText(env, L, lang, t), t.flight_at ? {} : kb([[[L.btnFlightTime, `tf:${t.id}`]]]));
   await tgUpload(env, 'sendDocument', { chat_id: t.owner_id, caption: L.icsCaption }, 'document', `${t.code}.ics`, tripIcs(t, o, L), 'text/calendar')
     .catch((e) => reportError(env, e, 'send ics'));
   await toAgent(env, t, AL(env).ack, 'ack');

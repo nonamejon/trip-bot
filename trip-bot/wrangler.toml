@@ -37,6 +37,11 @@ GEMINI_MODEL = "gemini-3.8-flash"
 AGENT_SLA_MIN = "240"   # agent should answer within this; then the bot reminds the agent
 NUDGE_MIN = "120"       # unapproved request or unchosen options: remind the owner after this
 
+# Public address of this Worker (used in the phone-calendar link).
+PUBLIC_URL = "https://trip-bot.zsayidfozil.workers.dev"
+# Local hour for the morning brief (today's plan), sent once a day before noon.
+BRIEF_HOUR = "8"
+
 # Local time of the owner, minutes from UTC (Tashkent = 300).
 TZ_OFFSET_MIN = "300"
 

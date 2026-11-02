@@ -37,7 +37,50 @@ CREATE TABLE IF NOT EXISTS travelers (
 CREATE TABLE IF NOT EXISTS prefs (
   telegram_id INTEGER PRIMARY KEY,
   lang        TEXT NOT NULL,
-  updated_at  INTEGER
+  updated_at  INTEGER,
+  mode        TEXT,                               -- what the next message is for: translate | letter | revise | agent | flight_time | clarify
+  mode_arg    TEXT,
+  mode_at     INTEGER,                            -- modes expire after a while
+  brief_date  TEXT                                -- last local date the morning brief was sent
+);
+
+-- Personal secretary: calendar events
+CREATE TABLE IF NOT EXISTS cal_events (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  owner_id   INTEGER NOT NULL,
+  title      TEXT NOT NULL,
+  start_at   INTEGER NOT NULL,                    -- UTC ms; for all-day events, local midnight
+  end_at     INTEGER,
+  all_day    INTEGER NOT NULL DEFAULT 0,
+  location   TEXT,
+  notes      TEXT,
+  remind_at  INTEGER,                             -- when to send the heads-up (null = none)
+  reminded   INTEGER NOT NULL DEFAULT 0,
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS cal_events_owner_start ON cal_events(owner_id, start_at);
+
+-- Personal secretary: reminders ("remind me at 9 to call Bobur")
+CREATE TABLE IF NOT EXISTS user_reminders (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  owner_id   INTEGER NOT NULL,
+  text       TEXT NOT NULL,
+  due_at     INTEGER NOT NULL,
+  repeat     TEXT NOT NULL DEFAULT 'none',        -- none | daily | weekdays | weekly | monthly
+  done       INTEGER NOT NULL DEFAULT 0,
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS user_reminders_due ON user_reminders(done, due_at);
+
+-- Personal secretary: drafted letters (kept so they can be revised or translated)
+CREATE TABLE IF NOT EXISTS letters (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  owner_id   INTEGER NOT NULL,
+  request    TEXT,
+  subject    TEXT,
+  body       TEXT NOT NULL,
+  lang       TEXT,
+  created_at INTEGER NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS documents (

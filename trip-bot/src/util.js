@@ -150,3 +150,23 @@ export async function decrypt(env, blob) {
   const pt = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: unb64(iv) }, await aesKey(env), unb64(ct));
   return new TextDecoder().decode(pt);
 }
+
+// ---------- "what is the next message for" (translate mode, letter request, ...) ----------
+const MODE_TTL = 30 * MIN;
+export async function setMode(env, uid, mode, arg = null) {
+  await run(env, 'UPDATE prefs SET mode = ?, mode_arg = ?, mode_at = ? WHERE telegram_id = ?', mode, arg == null ? null : String(arg), Date.now(), uid);
+}
+export async function getMode(env, uid) {
+  const r = await one(env, 'SELECT mode, mode_arg, mode_at FROM prefs WHERE telegram_id = ?', uid);
+  if (!r?.mode || Date.now() - (r.mode_at || 0) > MODE_TTL) return null;
+  return { mode: r.mode, arg: r.mode_arg };
+}
+export const clearMode = (env, uid) => run(env, 'UPDATE prefs SET mode = NULL, mode_arg = NULL, mode_at = NULL WHERE telegram_id = ?', uid);
+
+// ---------- local (Tashkent) calendar days ----------
+// UTC ms of local midnight for a local "YYYY-MM-DD"
+export const dayStart = (env, iso) => localToUtc(env, iso);
+export const addDaysISO = (iso, n) => new Date(Date.parse(iso.slice(0, 10)) + n * DAY).toISOString().slice(0, 10);
+export function weekdayName(iso, lang = 'uz') { return WD[normLang(lang)][new Date(Date.parse(iso.slice(0, 10))).getUTCDay()]; }
+// "dushanba, 3-noyabr" / "понедельник, 3 ноября"
+export function dayLabel(iso, lang = 'uz') { return `${weekdayName(iso, lang)}, ${dshort(iso, lang)}`; }

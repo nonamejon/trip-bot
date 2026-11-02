@@ -39,3 +39,24 @@ export const typing = (env, chatId) => tg(env, 'sendChatAction', { chat_id: chat
 
 // Inline keyboard: rows of [label, callback_data]
 export const kb = (rows) => ({ reply_markup: { inline_keyboard: rows.map((r) => r.map(([text, data]) => ({ text, callback_data: data }))) } });
+
+// Bottom keyboard that stays under the chat: rows of labels.
+export const replyKb = (rows) => ({ reply_markup: { keyboard: rows.map((r) => r.map((text) => ({ text }))), resize_keyboard: true, is_persistent: true } });
+
+// Telegram allows 4096 characters per message. Split long text at line breaks; buttons go on the last part.
+export async function sendLong(env, chatId, text, extra = {}) {
+  const LIMIT = 3900;
+  if (text.length <= LIMIT) return send(env, chatId, text, extra);
+  const parts = [];
+  let cur = '';
+  for (const line of text.split('\n')) {
+    if ((cur + '\n' + line).length > LIMIT && cur) { parts.push(cur); cur = ''; }
+    let l = line;
+    while (l.length > LIMIT) { parts.push(l.slice(0, LIMIT)); l = l.slice(LIMIT); }
+    cur = cur ? cur + '\n' + l : l;
+  }
+  if (cur) parts.push(cur);
+  let last;
+  for (let i = 0; i < parts.length; i++) last = await send(env, chatId, parts[i], i === parts.length - 1 ? extra : {});
+  return last;
+}

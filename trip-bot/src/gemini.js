@@ -17,10 +17,12 @@ const STYLE = {
 };
 const style = (lang) => STYLE[lang] || STYLE.uz;
 
-export async function gemini(env, { prompt, media = [], schema = null, temperature = 0.2 }) {
+// thinking: 'low' for quick routing steps (Gemini 3 thinking level); omitted = model default.
+export async function gemini(env, { prompt, media = [], schema = null, temperature = 0.2, thinking = null }) {
   const parts = [{ text: prompt }, ...media.map((m) => ({ inline_data: { mime_type: m.mime, data: m.b64 } }))];
   const generationConfig = { temperature };
   if (schema) { generationConfig.responseMimeType = 'application/json'; generationConfig.responseSchema = schema; }
+  if (thinking) generationConfig.thinkingConfig = { thinkingLevel: thinking };
   const body = JSON.stringify({ contents: [{ role: 'user', parts }], generationConfig });
   const r = await callWithFallback(env, body);
   const j = await r.json();
@@ -134,4 +136,117 @@ export async function transcribe(env, media) {
     media, schema: { type: 'OBJECT', properties: { transcript: { type: 'STRING' } }, required: ['transcript'] },
   });
   return r.transcript || '';
+}
+
+// ======================= personal secretary =======================
+
+const LANG_NAME = { uz: 'Uzbek (Latin script, with oʻ and gʻ)', ru: 'Russian', en: 'English' };
+const nowLine = (env) => {
+  const d = new Date(Date.now() + (Number(env.TZ_OFFSET_MIN) || 0) * 60e3);
+  const wd = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'][d.getUTCDay()];
+  return `Now in Tashkent: ${wd} ${d.toISOString().slice(0, 10)} ${d.toISOString().slice(11, 16)}.`;
+};
+
+// ---------- 4. What is this message for? ----------
+const ROUTE_SCHEMA = {
+  type: 'OBJECT',
+  properties: {
+    intent: { type: 'STRING', enum: ['trip', 'trip_note', 'trip_status', 'trip_cancel', 'event', 'reminder', 'translate', 'letter', 'agenda', 'reminders_list', 'chat'] },
+    transcript: S(),
+    question: S(),
+    reply: S(),
+    ev_title: S(), ev_date: S(), ev_time: S(), ev_end_time: S(), ev_location: S(), ev_notes: S(),
+    ev_remind_min: { type: 'INTEGER', nullable: true },
+    rm_text: S(), rm_date: S(), rm_time: S(),
+    rm_repeat: { type: 'STRING', enum: ['none', 'daily', 'weekdays', 'weekly', 'monthly'], nullable: true },
+    tr_text: S(), tr_target: S(),
+    lt_request: S(),
+    ag_from: S(), ag_to: S(),
+  },
+  required: ['intent'],
+};
+
+// ctx: { lang, trip: { code, status, destination } | null, pending: earlier unfinished message or null }
+export function routeMessage(env, text, media, ctx) {
+  const L = LANG_NAME[ctx.lang] || LANG_NAME.uz;
+  const trip = ctx.trip ? `His current trip: ${ctx.trip.code} to ${ctx.trip.destination || '(destination not given yet)'}, status "${ctx.trip.status}" (collecting = the bot is still asking him for trip details; draft = waiting for his approval; sent/offers/chosen/booked = the travel agent is working on it).` : 'He has no trip in progress.';
+  const prompt = `You route messages for a Telegram assistant of one executive, Azizbek, based in Tashkent. It is his travel assistant and personal secretary.
+${nowLine(env)}
+He writes or speaks in Uzbek, Russian or English, sometimes mixed.${media.length ? ' His message includes the attached file (voice note, photo or document); listen to it or read it.' : ''}
+${trip}
+${ctx.pending ? `His previous message was not complete and you asked him a question about it: """${ctx.pending}""". If this message answers it, combine both.` : ''}
+
+His message: """${text || '(none, see attachment)'}"""
+
+Decide the intent:
+- trip: a new trip or flight/hotel request, or more details/changes for the trip being collected or the draft ("2 kishi", "13-noyabrdan", "add Bobur").
+- trip_note: something for the travel agent about the trip the agent is already working on (seat, meal, a question for the agent, "agentga ayt ...").
+- trip_status: he asks where his trip/booking stands.
+- trip_cancel: he wants to cancel his trip.
+- event: put a meeting/appointment/event into his calendar ("ertaga 15:00 da uchrashuv", "встреча в пятницу в 10").
+- reminder: remind him to do something at a time ("eslat", "напомни", "remind me"), once or repeating.
+- translate: translate text, a voice note, a photo or a document.
+- letter: write/draft a letter, email, official request, message or note for him.
+- agenda: he asks what is planned (today, tomorrow, this week, a date).
+- reminders_list: he asks to see his reminders.
+- chat: greetings, thanks or anything else; put a short helpful answer in reply.
+
+Fill only the fields for the chosen intent:
+transcript: if there is a voice note or round video, its transcript in the original language; else null.
+event: ev_title (short, in his language), ev_date "YYYY-MM-DD", ev_time "HH:MM" or null for all-day, ev_end_time, ev_location, ev_notes, ev_remind_min (minutes before to remind him, only if he says so).
+reminder: rm_text (what to remind, short, in his language, as an instruction to him), rm_date "YYYY-MM-DD", rm_time "HH:MM", rm_repeat (none, daily, weekdays, weekly, monthly). "in 2 hours"/"через 20 минут" means from now. A date without a time means 09:00.
+translate: tr_text = the text to translate (null if it is the attachment), tr_target = ISO code of the language he wants (uz, ru, en, tr, ...) or null if he did not say.
+letter: lt_request = everything he said about the letter (recipient, purpose, details, tone, language).
+agenda: ag_from and ag_to "YYYY-MM-DD" (today if he does not say).
+Resolve relative dates and times from now, in Tashkent time.
+question: if an event or reminder has no date or time you can work out, one short question in ${L} asking only for that; else null.
+reply: for chat, a short answer in ${L}; else null.`;
+  return gemini(env, { prompt, media, schema: ROUTE_SCHEMA, thinking: 'low' });
+}
+
+// ---------- 5. Translation ----------
+export function translate(env, text, media, target, ownerLang) {
+  const fallback = LANG_NAME[ownerLang] || LANG_NAME.uz;
+  const prompt = `Translate for a busy executive in Tashkent.
+${text ? `Text: """${text}"""` : 'Translate the text in the attached file (voice note, photo or document). If it is a photo of a document, translate all the text in it, keeping its structure.'}
+Target language: ${target ? `the language with ISO code "${target}"` : `${fallback} if the text is in another language; if the text is already in ${fallback}, translate it into ${ownerLang === 'ru' ? 'Uzbek (Latin script)' : 'Russian'}`}.
+Keep names, numbers, dates and formatting. Translate faithfully; do not add comments.
+Return JSON: source_lang (ISO code), target_lang (ISO code), translation.`;
+  return gemini(env, {
+    prompt, media,
+    schema: { type: 'OBJECT', properties: { source_lang: S(), target_lang: S(), translation: { type: 'STRING' } }, required: ['translation'] },
+  });
+}
+
+// ---------- 6. Letters ----------
+const LETTER_SCHEMA = { type: 'OBJECT', properties: { subject: S(), body: { type: 'STRING' }, lang: S() }, required: ['body'] };
+
+export function writeLetter(env, request, ownerLang) {
+  const prompt = `You are the personal secretary of Azizbek, an executive based in Tashkent. Draft the letter he asks for.
+His request: """${request}"""
+${nowLine(env)}
+Write it in the language he asks for; if he does not say, in ${LANG_NAME[ownerLang] || LANG_NAME.uz}. Use the tone that fits the recipient (official, business or friendly).
+Ready to send: a greeting, a clear body, a polite closing and his name "Azizbek" (add a surname only if he gives one). Where a fact you need is missing, write a short placeholder in square brackets, like [sana].
+Plain text, no markdown.
+Return JSON: subject (a short subject line, or null for a personal message), body, lang (ISO code).`;
+  return gemini(env, { prompt, schema: LETTER_SCHEMA, temperature: 0.5 });
+}
+
+export function reviseLetter(env, letter, instruction) {
+  const prompt = `You are the personal secretary of Azizbek. Here is a letter you drafted:
+Subject: ${letter.subject || '(none)'}
+"""${letter.body}"""
+
+His instruction: """${instruction}"""
+Rewrite the letter following the instruction (it may ask to change content, tone, length, or to translate it). Keep everything else.
+Plain text, no markdown. Return JSON: subject, body, lang (ISO code).`;
+  return gemini(env, { prompt, schema: LETTER_SCHEMA, temperature: 0.4 });
+}
+
+// ---------- 7. A date and time from free text ("12-noyabr 07:40", "завтра в 9") ----------
+export function parseWhen(env, text) {
+  const prompt = `${nowLine(env)}
+Read the date and time in this message (Tashkent time; resolve relative dates from now): """${text}"""
+Return JSON: date "YYYY-MM-DD" or null, time "HH:MM" or null.`;
+  return gemini(env, { prompt, schema: { type: 'OBJECT', properties: { date: S(), time: S() } }, thinking: 'low' });
 }

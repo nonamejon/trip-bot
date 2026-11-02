@@ -1,7 +1,8 @@
 // Cloudflare Worker entry point.
 //   POST /telegram         Telegram webhook (checked with WEBHOOK_SECRET)
 //   GET  /setup?key=...    one-time: points the Telegram webhook at this Worker and sets the command list
-//   cron (every minute)    mock agent replies, reminders, agent-late checks
+//   GET  /cal/<token>.ics  the owner's calendar, for subscribing from a phone (link comes from the bot)
+//   cron (every minute)    mock agent replies, trip checks, secretary reminders and the morning brief
 
 import { run, esc } from './util.js';
 import { COMMANDS, STRANGER, AL } from './i18n.js';
@@ -9,6 +10,7 @@ import { tg, send } from './telegram.js';
 import { handleOwnerMessage, handleCallback, handleAgentMessage, runChecks, reportError, adminIds } from './flow.js';
 import { runJobs } from './mock.js';
 import { isMock } from './agent.js';
+import { calendarFeed, secretaryChecks } from './secretary.js';
 
 export default {
   async fetch(req, env, ctx) {
@@ -37,6 +39,13 @@ export default {
       return Response.json({ webhook_set: hook, bot: '@' + me.username, agent_mode: isMock(env) ? 'mock' : 'group' });
     }
 
+    const cal = url.pathname.match(/^\/cal\/([0-9a-f]{32})\.ics$/);
+    if (cal && req.method === 'GET') {
+      const ics = await calendarFeed(env, cal[1]);
+      if (!ics) return new Response('not found', { status: 404 });
+      return new Response(ics, { headers: { 'content-type': 'text/calendar; charset=utf-8', 'cache-control': 'no-store' } });
+    }
+
     return new Response('Trip bot is running.');
   },
 
@@ -44,6 +53,7 @@ export default {
     ctx.waitUntil((async () => {
       try { await runJobs(env); } catch (e) { await reportError(env, e, 'cron jobs'); }
       try { await runChecks(env); } catch (e) { await reportError(env, e, 'cron checks'); }
+      try { await secretaryChecks(env); } catch (e) { await reportError(env, e, 'cron secretary'); }
     })());
   },
 };

@@ -5,23 +5,56 @@ const icsTime = (ms) => { const d = new Date(ms); return `${d.getUTCFullYear()}$
 const icsDate = (iso) => iso.slice(0, 10).replace(/-/g, '');
 const icsText = (s) => String(s ?? '').replace(/\\/g, '\\\\').replace(/;/g, '\\;').replace(/,/g, '\\,').replace(/\n/g, '\\n');
 
-// One file with the outbound flight and the whole trip as an all-day span. Opens in any calendar app.
-// L: the owner's strings (i18n.js O[lang]).
-export function tripIcs(t, offer, L) {
-  const f = t.fields, now = icsTime(Date.now());
-  const ev = [];
+const icsWrap = (events, name) => new TextEncoder().encode(['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//trip-bot//EN', 'CALSCALE:GREGORIAN',
+  ...(name ? [`X-WR-CALNAME:${icsText(name)}`, 'REFRESH-INTERVAL;VALUE=DURATION:PT1H', 'X-PUBLISHED-TTL:PT1H'] : []), ...events, 'END:VCALENDAR'].join('\r\n') + '\r\n');
+
+// One VEVENT. Either start/end (UTC ms) or dateFrom/dateTo ("YYYY-MM-DD", inclusive) for all-day spans.
+function vevent({ uid, start, end, dateFrom, dateTo, summary, description, location, alarmMin, alarmText }) {
+  const out = ['BEGIN:VEVENT', `UID:${uid}@trip-bot`, `DTSTAMP:${icsTime(Date.now())}`];
+  if (dateFrom) {
+    const endDay = new Date(Date.parse((dateTo || dateFrom).slice(0, 10)) + 86400e3).toISOString().slice(0, 10);
+    out.push(`DTSTART;VALUE=DATE:${icsDate(dateFrom)}`, `DTEND;VALUE=DATE:${icsDate(endDay)}`);
+  } else {
+    out.push(`DTSTART:${icsTime(start)}`, `DTEND:${icsTime(end || start + 3600e3)}`);
+  }
+  out.push(`SUMMARY:${icsText(summary)}`);
+  if (description) out.push(`DESCRIPTION:${icsText(description)}`);
+  if (location) out.push(`LOCATION:${icsText(location)}`);
+  if (alarmMin != null) out.push('BEGIN:VALARM', `TRIGGER:-PT${alarmMin}M`, 'ACTION:DISPLAY', `DESCRIPTION:${icsText(alarmText || summary)}`, 'END:VALARM');
+  out.push('END:VEVENT');
+  return out.join('\r\n');
+}
+
+// A trip: the outbound flight (with a "leave for the airport" alarm) and the whole trip as an all-day span.
+function tripEvents(t, offer, L) {
+  const f = t.fields, ev = [];
   if (t.flight_at) {
-    ev.push(['BEGIN:VEVENT', `UID:${t.code}-flight@trip-bot`, `DTSTAMP:${now}`, `DTSTART:${icsTime(t.flight_at)}`, `DTEND:${icsTime(t.flight_at + 3 * 3600e3)}`,
-      `SUMMARY:${icsText(`${L.icsFlight}: ${f.origin || L.origin} → ${f.destination}`)}`, `DESCRIPTION:${icsText([offer?.airline, offer?.outbound, t.code].filter(Boolean).join(' · '))}`,
-      'BEGIN:VALARM', 'TRIGGER:-PT3H', 'ACTION:DISPLAY', `DESCRIPTION:${icsText(L.icsLeave)}`, 'END:VALARM', 'END:VEVENT'].join('\r\n'));
+    ev.push(vevent({ uid: `${t.code}-flight`, start: t.flight_at, end: t.flight_at + 3 * 3600e3,
+      summary: `${L.icsFlight}: ${f.origin || L.origin} → ${f.destination}`, description: [offer?.airline, offer?.outbound, t.code].filter(Boolean).join(' · '),
+      alarmMin: 180, alarmText: L.icsLeave }));
   }
   if (f.date_from && f.date_to) {
-    const end = new Date(Date.parse(f.date_to.slice(0, 10)) + 86400e3).toISOString().slice(0, 10);
-    ev.push(['BEGIN:VEVENT', `UID:${t.code}-trip@trip-bot`, `DTSTAMP:${now}`, `DTSTART;VALUE=DATE:${icsDate(f.date_from)}`, `DTEND;VALUE=DATE:${icsDate(end)}`,
-      `SUMMARY:${icsText(`${L.icsTrip}: ${f.destination}`)}`, `DESCRIPTION:${icsText([offer?.hotel, t.code].filter(Boolean).join(' · '))}`, 'END:VEVENT'].join('\r\n'));
+    ev.push(vevent({ uid: `${t.code}-trip`, dateFrom: f.date_from, dateTo: f.date_to, summary: `${L.icsTrip}: ${f.destination}`,
+      description: [offer?.hotel, t.code].filter(Boolean).join(' · ') }));
   }
-  return new TextEncoder().encode(['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//trip-bot//EN', ...ev, 'END:VCALENDAR'].join('\r\n') + '\r\n');
+  return ev;
 }
+
+// tzMs: owner's offset from UTC in ms (all-day events are stored as local midnight).
+function calEvent(e, tzMs) {
+  const base = { uid: `ev-${e.id}`, summary: e.title, description: e.notes || '', location: e.location || '' };
+  if (e.all_day) {
+    const iso = new Date(e.start_at + tzMs).toISOString().slice(0, 10);
+    return vevent({ ...base, dateFrom: iso });
+  }
+  return vevent({ ...base, start: e.start_at, end: e.end_at, alarmMin: e.remind_at ? Math.round((e.start_at - e.remind_at) / 60e3) : null });
+}
+
+// L: the owner's strings (i18n.js O[lang]).
+export const tripIcs = (t, offer, L) => icsWrap(tripEvents(t, offer, L));
+export const eventIcs = (e, tzMs) => icsWrap([calEvent(e, tzMs)]);
+// The subscription feed: all calendar events and booked trips.
+export const feedIcs = (events, trips, L, name, tzMs) => icsWrap([...events.map((e) => calEvent(e, tzMs)), ...trips.flatMap((t) => tripEvents(t, t.offers?.[t.chosen], L))], name);
 
 // Minimal one-page PDF with plain lines of text (ASCII). Used only by the mock agent.
 // Uzbek Latin fits in ASCII once its apostrophes (oʻ gʻ, ʼ) are written as '. Cyrillic does not (no font for it here).
