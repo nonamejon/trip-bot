@@ -33,6 +33,13 @@ CREATE TABLE IF NOT EXISTS travelers (
   updated_at   INTEGER
 );
 
+-- Per-person settings: chosen language ('uz' | 'ru')
+CREATE TABLE IF NOT EXISTS prefs (
+  telegram_id INTEGER PRIMARY KEY,
+  lang        TEXT NOT NULL,
+  updated_at  INTEGER
+);
+
 CREATE TABLE IF NOT EXISTS documents (
   id         INTEGER PRIMARY KEY AUTOINCREMENT,
   trip_id    INTEGER NOT NULL,

@@ -3,14 +3,16 @@
 //   mock:  nothing goes out. A delayed job makes a fake agent answer (see mock.js),
 //          and the conversation is mirrored into the owner's chat so you can follow it.
 
-import { run, esc, logEvent, saveTrip, MIN } from './util.js';
+import { run, esc, logEvent, saveTrip, MIN, strings } from './util.js';
 import { send, tg } from './telegram.js';
 
 export const isMock = (env) => (env.AGENT_MODE || 'mock') !== 'group';
 
+// who: 'agent' | 'bot'. Labels are in the owner's language; the text is what was actually said.
 export async function mirror(env, t, who, text) {
   if (!isMock(env) || env.MOCK_MIRROR === 'false') return;
-  await send(env, t.owner_id, `<i>[Agent guruhi · ${t.code}] ${esc(who)}:</i>\n${esc(text)}`).catch(() => {});
+  const { L } = await strings(env, t.owner_id);
+  await send(env, t.owner_id, `<i>[${L.mirrorGroup} · ${t.code}] ${who === 'bot' ? L.mirrorBot : L.mirrorAgent}:</i>\n${esc(text)}`).catch(() => {});
 }
 
 export async function openAgentThread(env, t) {
@@ -32,7 +34,7 @@ export async function toAgent(env, t, text, kind) {
     await send(env, env.AGENT_CHAT_ID, esc(text), t.agent_thread_id ? { message_thread_id: t.agent_thread_id } : {});
     return;
   }
-  await mirror(env, t, 'Bot → agent', kind === 'passport' ? '(pasport maʼlumotlari agentga yuborildi, bu yerda yashirilgan)' : text);
+  await mirror(env, t, 'bot', kind === 'passport' ? (await strings(env, t.owner_id)).L.passportHidden : text);
   const d = Number(env.MOCK_DELAY_MIN) || 2;
   const plan = { request: ['mock_offers', d], other: ['mock_offers', d], clarify: ['mock_clarify', 1], choice: ['mock_book', d], cancel: ['mock_cancel', 1], note: ['mock_note', 1] }[kind];
   if (plan) {

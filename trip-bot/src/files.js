@@ -6,25 +6,28 @@ const icsDate = (iso) => iso.slice(0, 10).replace(/-/g, '');
 const icsText = (s) => String(s ?? '').replace(/\\/g, '\\\\').replace(/;/g, '\\;').replace(/,/g, '\\,').replace(/\n/g, '\\n');
 
 // One file with the outbound flight and the whole trip as an all-day span. Opens in any calendar app.
-export function tripIcs(t, offer) {
+// L: the owner's strings (i18n.js O[lang]).
+export function tripIcs(t, offer, L) {
   const f = t.fields, now = icsTime(Date.now());
   const ev = [];
   if (t.flight_at) {
     ev.push(['BEGIN:VEVENT', `UID:${t.code}-flight@trip-bot`, `DTSTAMP:${now}`, `DTSTART:${icsTime(t.flight_at)}`, `DTEND:${icsTime(t.flight_at + 3 * 3600e3)}`,
-      `SUMMARY:${icsText('Parvoz: ' + (f.origin || 'Toshkent') + ' → ' + f.destination)}`, `DESCRIPTION:${icsText([offer?.airline, offer?.outbound, t.code].filter(Boolean).join(' · '))}`,
-      'BEGIN:VALARM', 'TRIGGER:-PT3H', 'ACTION:DISPLAY', 'DESCRIPTION:Aeroportga yoʻl olish vaqti', 'END:VALARM', 'END:VEVENT'].join('\r\n'));
+      `SUMMARY:${icsText(`${L.icsFlight}: ${f.origin || L.origin} → ${f.destination}`)}`, `DESCRIPTION:${icsText([offer?.airline, offer?.outbound, t.code].filter(Boolean).join(' · '))}`,
+      'BEGIN:VALARM', 'TRIGGER:-PT3H', 'ACTION:DISPLAY', `DESCRIPTION:${icsText(L.icsLeave)}`, 'END:VALARM', 'END:VEVENT'].join('\r\n'));
   }
   if (f.date_from && f.date_to) {
     const end = new Date(Date.parse(f.date_to.slice(0, 10)) + 86400e3).toISOString().slice(0, 10);
     ev.push(['BEGIN:VEVENT', `UID:${t.code}-trip@trip-bot`, `DTSTAMP:${now}`, `DTSTART;VALUE=DATE:${icsDate(f.date_from)}`, `DTEND;VALUE=DATE:${icsDate(end)}`,
-      `SUMMARY:${icsText('Safar: ' + f.destination)}`, `DESCRIPTION:${icsText([offer?.hotel, t.code].filter(Boolean).join(' · '))}`, 'END:VEVENT'].join('\r\n'));
+      `SUMMARY:${icsText(`${L.icsTrip}: ${f.destination}`)}`, `DESCRIPTION:${icsText([offer?.hotel, t.code].filter(Boolean).join(' · '))}`, 'END:VEVENT'].join('\r\n'));
   }
   return new TextEncoder().encode(['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//trip-bot//EN', ...ev, 'END:VCALENDAR'].join('\r\n') + '\r\n');
 }
 
 // Minimal one-page PDF with plain lines of text (ASCII). Used only by the mock agent.
+// Uzbek Latin fits in ASCII once its apostrophes (oʻ gʻ, ʼ) are written as '. Cyrillic does not (no font for it here).
+const ASCII = { 'ʻ': "'", 'ʼ': "'", '‘': "'", '’': "'", '“': '"', '”': '"', '«': '"', '»': '"', '–': '-', '—': '-', '→': '->', '×': 'x', '★': '*' };
 export function tinyPdf(lines) {
-  const safe = (s) => String(s).replace(/[^\x20-\x7e]/g, '?').replace(/[\\()]/g, (m) => '\\' + m);
+  const safe = (s) => String(s).replace(/[ʻʼ‘’“”«»–—→×★]/g, (c) => ASCII[c]).replace(/[^\x20-\x7e]/g, '?').replace(/[\\()]/g, (m) => '\\' + m);
   let content = 'BT /F1 13 Tf 50 790 Td 20 TL ';
   lines.forEach((l, i) => { content += (i ? 'T* ' : '') + '(' + safe(l) + ') Tj '; });
   content += 'ET';

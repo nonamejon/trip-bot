@@ -1,5 +1,7 @@
 // Small shared helpers: database, time, text, encoding, encryption.
 
+import { O, normLang } from './i18n.js';
+
 export const MIN = 60e3, HOUR = 60 * MIN, DAY = 24 * HOUR;
 
 // ---------- database ----------
@@ -11,6 +13,21 @@ export const run = (env, sql, ...a) => env.DB.prepare(sql).bind(...clean(a)).run
 export async function logEvent(env, actor, action, tripId = null, detail = null) {
   await run(env, 'INSERT INTO events (ts, actor, action, trip_id, detail) VALUES (?, ?, ?, ?, ?)',
     Date.now(), actor, action, tripId, detail == null ? null : (typeof detail === 'string' ? detail : JSON.stringify(detail)));
+}
+
+// ---------- language (per person: 'uz' | 'ru'; null until they pick) ----------
+export async function getLang(env, uid) {
+  const r = await one(env, 'SELECT lang FROM prefs WHERE telegram_id = ?', uid);
+  return r ? normLang(r.lang) : null;
+}
+export async function setLang(env, uid, lang) {
+  await run(env, 'INSERT INTO prefs (telegram_id, lang, updated_at) VALUES (?, ?, ?) ON CONFLICT(telegram_id) DO UPDATE SET lang = excluded.lang, updated_at = excluded.updated_at',
+    uid, normLang(lang), Date.now());
+}
+// Strings for a person, Uzbek until they choose.
+export async function strings(env, uid) {
+  const lang = (await getLang(env, uid)) || 'uz';
+  return { lang, L: O[lang] };
 }
 
 // ---------- trips ----------
@@ -59,8 +76,16 @@ export async function setStatus(env, t, status, actor = 'bot') {
 }
 
 // ---------- time ----------
-const WD = ['yakshanba', 'dushanba', 'seshanba', 'chorshanba', 'payshanba', 'juma', 'shanba'];
-const MO = ['yanvar', 'fevral', 'mart', 'aprel', 'may', 'iyun', 'iyul', 'avgust', 'sentabr', 'oktabr', 'noyabr', 'dekabr'];
+const WD = {
+  uz: ['yakshanba', 'dushanba', 'seshanba', 'chorshanba', 'payshanba', 'juma', 'shanba'],
+  ru: ['воскресенье', 'понедельник', 'вторник', 'среда', 'четверг', 'пятница', 'суббота'],
+};
+const MO = {
+  uz: ['yanvar', 'fevral', 'mart', 'aprel', 'may', 'iyun', 'iyul', 'avgust', 'sentabr', 'oktabr', 'noyabr', 'dekabr'],
+  ru: ['января', 'февраля', 'марта', 'апреля', 'мая', 'июня', 'июля', 'августа', 'сентября', 'октября', 'ноября', 'декабря'],
+};
+// "12-noyabr" / "12 ноября"
+const dm = (d, m, lang) => (lang === 'ru' ? `${d} ${MO.ru[m]}` : `${d}-${MO.uz[m]}`);
 const p2 = (n) => String(n).padStart(2, '0');
 export const tz = (env) => (Number(env.TZ_OFFSET_MIN) || 0) * MIN;
 
@@ -68,15 +93,16 @@ export function localISODate(env, ms = Date.now()) {
   const d = new Date(ms + tz(env));
   return `${d.getUTCFullYear()}-${p2(d.getUTCMonth() + 1)}-${p2(d.getUTCDate())}`;
 }
-export function fmtLocal(env, ms) {
+export function fmtLocal(env, ms, lang = 'uz') {
   const d = new Date(ms + tz(env));
-  return `${WD[d.getUTCDay()]}, ${d.getUTCDate()}-${MO[d.getUTCMonth()]}, ${p2(d.getUTCHours())}:${p2(d.getUTCMinutes())}`;
+  lang = normLang(lang);
+  return `${WD[lang][d.getUTCDay()]}, ${dm(d.getUTCDate(), d.getUTCMonth(), lang)}, ${p2(d.getUTCHours())}:${p2(d.getUTCMinutes())}`;
 }
 export function hmLocal(env, ms) { const d = new Date(ms + tz(env)); return `${p2(d.getUTCHours())}:${p2(d.getUTCMinutes())}`; }
-export function dshort(iso) {
+export function dshort(iso, lang = 'uz') {
   if (!iso || !/^\d{4}-\d{2}-\d{2}/.test(iso)) return '?';
   const [, m, d] = iso.slice(0, 10).split('-').map(Number);
-  return `${d}-${MO[m - 1]}`;
+  return dm(d, m - 1, normLang(lang));
 }
 // "2026-11-12" or "2026-11-12T07:40" in the owner's local time -> UTC ms
 export function localToUtc(env, iso) {
@@ -95,11 +121,11 @@ export function nights(a, b) {
 
 // ---------- text ----------
 export const esc = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-export function money(o) {
-  if (!o || o.total_price == null) return 'narxi nomaʼlum';
+export function money(o, lang = 'uz') {
+  if (!o || o.total_price == null) return O[normLang(lang)].priceUnknown;
   return Number(o.total_price).toLocaleString('en-US').replace(/,/g, ' ') + ' ' + (o.currency || 'USD');
 }
-export const refundWord = (r) => ({ full: 'toʻliq qaytariladi', penalty: 'jarima bilan qaytariladi', none: 'qaytarilmaydi' }[r] || 'koʻrsatilmagan');
+export const refundWord = (r, lang = 'uz') => { const w = O[normLang(lang)].refund; return w[r] || w.unknown; };
 
 // ---------- encoding ----------
 export function b64(bytes) {

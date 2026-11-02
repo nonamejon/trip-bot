@@ -2,6 +2,21 @@
 
 import { localISODate } from './util.js';
 
+// How Gemini should write for the owner's language.
+const STYLE = {
+  uz: {
+    name: 'Uzbek (Latin script, with oʻ and gʻ)', polite: 'addressing him politely with "siz"', origin: 'Toshkent',
+    places: 'the usual Uzbek spelling of place names (Toshkent, Istanbul, Dubay, Moskva)',
+    labels: '"1-variant", "2-variant", ...', ret: '"15-noyabr 19:30"', stops: '"toʻgʻri reys" or "X orqali 1 ta qoʻnish"',
+  },
+  ru: {
+    name: 'Russian', polite: 'addressing him politely with "вы"', origin: 'Ташкент',
+    places: 'the usual Russian spelling of place names (Ташкент, Стамбул, Дубай, Москва)',
+    labels: '"Вариант 1", "Вариант 2", ...', ret: '"15 ноября 19:30"', stops: '"прямой" or "1 пересадка в X"',
+  },
+};
+const style = (lang) => STYLE[lang] || STYLE.uz;
+
 export async function gemini(env, { prompt, media = [], schema = null, temperature = 0.2 }) {
   const parts = [{ text: prompt }, ...media.map((m) => ({ inline_data: { mime_type: m.mime, data: m.b64 } }))];
   const generationConfig = { temperature };
@@ -56,7 +71,8 @@ const REQUEST_SCHEMA = {
   },
 };
 
-export function parseRequest(env, draft, text, media) {
+export function parseRequest(env, draft, text, media, lang = 'uz') {
+  const S = style(lang);
   const prompt = `You are the parsing step of a Telegram travel assistant for one executive, Azizbek, based in Tashkent. Today is ${localISODate(env)}.
 He writes or speaks in Uzbek, Russian or English, sometimes mixed.${media.length ? ' His message includes the attached file (a voice note, photo or document); read or transcribe it.' : ''}
 
@@ -65,9 +81,9 @@ His message text: """${text || '(none, see attachment)'}"""
 
 Merge the message into the draft and return JSON with these fields:
 transcript: if there is a voice note, its transcript in the original language; else null.
-origin (default "Toshkent"), destination, date_from and date_to ("YYYY-MM-DD"), travelers (number), traveler_names, flight_pref, baggage (default "1 x 23 kg"), hotel (his hotel wishes, short), budget, notes.
-question: one short friendly question in Uzbek (Latin script), addressing him politely with "siz", asking for ALL still-missing required fields (destination, date_from, date_to, travelers) at once; null if none are missing.
-Rules: keep draft values unless he changes them. If he gives a length ("3 days", "3 kunga") compute date_to from date_from. Resolve relative dates ("next Monday") from today. If he says he travels alone, travelers = 1. Never invent a destination, dates or traveler count. Write field values in Uzbek (Latin script, with oʻ and gʻ), using the usual Uzbek spelling of place names (Toshkent, Istanbul, Dubay, Moskva).`;
+origin (default "${S.origin}"), destination, date_from and date_to ("YYYY-MM-DD"), travelers (number), traveler_names, flight_pref, baggage (default "1 x 23 kg"), hotel (his hotel wishes, short), budget, notes.
+question: one short friendly question in ${S.name}, ${S.polite}, asking for ALL still-missing required fields (destination, date_from, date_to, travelers) at once; null if none are missing.
+Rules: keep draft values unless he changes them. If he gives a length ("3 days", "3 kunga") compute date_to from date_from. Resolve relative dates ("next Monday") from today. If he says he travels alone, travelers = 1. Never invent a destination, dates or traveler count. Write field values in ${S.name}, using ${S.places}.`;
   return gemini(env, { prompt, media, schema: REQUEST_SCHEMA });
 }
 
@@ -93,7 +109,8 @@ const OFFERS_SCHEMA = {
   required: ['offers'],
 };
 
-export function parseOffers(env, fields, agentTexts, media) {
+export function parseOffers(env, fields, agentTexts, media, lang = 'uz') {
+  const S = style(lang);
   const prompt = `You are the parsing step of a Telegram travel assistant. A travel agent is answering this request:
 ${JSON.stringify(fields)}
 
@@ -102,10 +119,10 @@ Everything the agent has written for this request so far (later messages may add
 ${media.length ? 'The agent also attached the file(s) included here; read them.' : ''}
 
 Return JSON:
-offers: every option the agent gave, in order, each with label ("1-variant", "2-variant", ...), airline, outbound (short, like "07:40 → 10:55"), outbound_datetime ("YYYY-MM-DDTHH:MM", local departure time), return (short, with date and time, like "15-noyabr 19:30"), stops ("toʻgʻri reys" or "X orqali 1 ta qoʻnish"), hotel (name and stars), distance (to where he needs to be, in Uzbek), total_price (number), currency, refund ("full", "penalty", "none" or "unknown"), refund_note (in Uzbek).
+offers: every option the agent gave, in order, each with label (${S.labels}), airline, outbound (short, like "07:40 → 10:55"), outbound_datetime ("YYYY-MM-DDTHH:MM", local departure time), return (short, with date and time, like ${S.ret}), stops (${S.stops}), hotel (name and stars), distance (to where he needs to be), total_price (number), currency, refund ("full", "penalty", "none" or "unknown"), refund_note.
 recommended: index (0-based) of the best fit for the request: his wishes on flight time and hotel location first, then flexibility, then price.
-reason: one short sentence in Uzbek (Latin script) saying why.
-Write all free-text values in Uzbek (Latin script); keep airline names, flight numbers and hotel names as they are.
+reason: one short sentence saying why.
+Write all free-text values in ${S.name}; keep airline names, flight numbers and hotel names as they are.
 Use only what the agent wrote; anything not stated stays null or "unknown". If there are no options in the text, return offers: [].`;
   return gemini(env, { prompt, media, schema: OFFERS_SCHEMA });
 }

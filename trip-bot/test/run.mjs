@@ -2,6 +2,7 @@
 import Database from 'better-sqlite3';
 import fs from 'node:fs';
 import worker from '../src/index.js';
+import { tinyPdf } from '../src/files.js';
 
 // ---------- fake clock ----------
 let NOW = Date.UTC(2026, 10, 2, 4, 0); // 09:00 Tashkent
@@ -123,7 +124,14 @@ await update({ message: { message_id: 1, from: { id: 999, is_bot: false }, chat:
 show('stranger writes');
 assert(sent.at(-1).p.text.includes('999'), 'stranger gets their id, nothing else');
 
+await say('salom'); show('first message, no language yet');
+const lastKb = () => { const m = sent.filter((x) => x.method === 'sendMessage').at(-1); return JSON.stringify(m.p.reply_markup || ''); };
+assert(lastKb().includes('lg:uz') && lastKb().includes('lg:ru'), 'first message asks for a language with flag buttons');
 await say('/start'); show('/start');
+assert(lastKb().includes('lg:uz') && lastKb().includes('🇷🇺'), '/start asks for a language');
+await tap('lg:uz'); show('picked Uzbek');
+assert(sqlite.prepare('SELECT lang FROM prefs WHERE telegram_id = 111').get()?.lang === 'uz', 'language saved');
+assert(sent.some((x) => x.method === 'setMyCommands' && x.p.scope?.chat_id === 111 && x.p.commands[0].description === 'Joriy safar holati'), 'command menu set to Uzbek for this chat');
 await say('/passport AZIZBEK UBAYDULLAYEV, FA1234567, valid until 2031-05-01'); show('/passport');
 const trav = sqlite.prepare('SELECT passport_enc FROM travelers').get();
 assert(trav.passport_enc.startsWith('v1:') && !trav.passport_enc.includes('FA1234567'), 'passport stored encrypted');
@@ -171,7 +179,10 @@ assert(status().status === 'done', 'trip closed as done');
 
 // second trip: agent never answers -> SLA reminder; then owner cancels
 failNextGemini = true;
+await say('/ru'); show('/ru');
+assert(sqlite.prepare('SELECT lang FROM prefs WHERE telegram_id = 111').get()?.lang === 'ru', 'switched to Russian');
 await say('Istanbul again please, same as before'); show('second trip');
+assert(sent.filter((x) => x.method === 'sendMessage').at(-1).p.text.includes('Проверьте заявку'), 'draft card in Russian');
 const t2 = status().id;
 assert(geminiCalls.includes('503') && status().status === 'draft', 'Gemini 503 -> retried and succeeded');
 await tap(`ap:${t2}`);
@@ -179,9 +190,15 @@ await say('/jobs');
 sqlite.prepare('UPDATE jobs SET done_at = 1 WHERE done_at IS NULL').run(); // agent goes silent
 advance(241); await cron(); show('cron: agent late');
 assert(sqlite.prepare('SELECT sla_reminded FROM trips WHERE id = ?').get(t2).sla_reminded === 1, 'agent-late reminder sent');
-await say('cancel the trip'); show('cancel request');
+await say('отмени поездку'); show('cancel request (Russian)');
+assert(lastKb().includes('cy:'), 'Russian cancel word understood');
 await tap(`cy:${t2}`); show('confirm cancel');
 assert(status().status === 'cancelled', 'cancelled');
+
+await say('/uz'); show('/uz');
+assert(sent.filter((x) => x.method === 'sendMessage').at(-1).p.text.startsWith('Til: Oʻzbekcha'), 'switched back to Uzbek');
+const pdf = new TextDecoder().decode(tinyPdf(["Yoʻlovchi: AZIZBEK", 'Toshkent → Istanbul']));
+assert(pdf.includes("(Yo'lovchi: AZIZBEK)") && pdf.includes('(Toshkent -> Istanbul)') && !pdf.includes('?'), 'PDF keeps Uzbek letters');
 
 await say('/log 12'); show('admin /log');
 

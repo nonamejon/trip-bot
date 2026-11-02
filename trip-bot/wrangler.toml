@@ -24,6 +24,8 @@ AGENT_MODE = "mock"
 AGENT_CHAT_ID = ""
 # "true" if the agent group has Topics turned on and the bot is an admin there: one topic per trip.
 AGENT_TOPICS = "false"
+# Language of messages to the travel agent: "uz" or "ru". (The owner picks his own with /uz or /ru.)
+AGENT_LANG = "uz"
 # Mock agent only: show the agent-group conversation inside your own chat so you can follow it.
 MOCK_MIRROR = "true"
 # Mock agent only: minutes before the mock agent answers.

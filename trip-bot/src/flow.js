@@ -3,22 +3,25 @@
 //  collecting -> draft -> sent -> offers -> chosen -> booked -> done
 //                 (owner approves) (agent answers) (owner picks) (agent uploads)
 //  Any open state can go to cancelled.
+//
+// Text: the owner sees his chosen language (O[lang], /uz or /ru); the agent sees AGENT_LANG (AL(env)).
+// Admin output and error alerts are English.
 
 import {
   MIN, DAY, one, all, run, logEvent, getTrip, activeTrip, createTrip, saveTrip, setStatus, WITH_AGENT, code,
-  fmtLocal, hmLocal, dshort, localToUtc, nights, esc, money, refundWord, b64, encrypt, decrypt,
+  fmtLocal, hmLocal, dshort, localToUtc, nights, esc, money, refundWord, b64, encrypt, decrypt, getLang, setLang, strings,
 } from './util.js';
 import { tg, tgUpload, send, typing, kb, download } from './telegram.js';
 import { parseRequest, parseOffers, transcribe } from './gemini.js';
 import { toAgent, openAgentThread, mirror, isMock } from './agent.js';
 import { tripIcs } from './files.js';
+import { O, AL, agentLang, PICK_TEXT, PICK_BUTTONS, COMMANDS } from './i18n.js';
 
 const REQUIRED = ['destination', 'date_from', 'date_to', 'travelers'];
-const LABEL = { destination: 'qayerga borish', date_from: 'joʻnash sanasi', date_to: 'qaytish sanasi', travelers: 'yoʻlovchilar soni' };
-const STATUS_UZ = { collecting: 'maʼlumot yigʻilmoqda', draft: 'tasdiq kutilmoqda', sent: 'agentda', offers: 'variantlar tayyor', chosen: 'bron qilinmoqda', booked: 'bron qilindi', done: 'yakunlandi', cancelled: 'bekor qilindi' };
 const FIELD_KEYS = ['origin', 'destination', 'date_from', 'date_to', 'travelers', 'traveler_names', 'flight_pref', 'baggage', 'hotel', 'budget', 'notes'];
-const CANCEL = /\b(cancel|bekor|отмен)/i;
-const STATUS = /\b(status|holat|статус|qayerda|where)\b/i;
+// \b does not work with Cyrillic in JS, so word starts/ends are checked with Unicode letter lookarounds.
+const CANCEL = /(?<!\p{L})(cancel|bekor|отмен)/iu;
+const STATUS = /(?<!\p{L})(status|holat|статус|qayerda|где|where)(?!\p{L})/iu;
 const MAX_MEDIA = 15 * 1024 * 1024;
 
 const isOwner = (env, id) => String(id) === String(env.OWNER_ID);
@@ -34,75 +37,90 @@ export async function reportError(env, e, where) {
 
 // ======================= text blocks =======================
 
-export function templateText(t) {
-  const f = t.fields, n = nights(f.date_from, f.date_to);
+// The request as the agent sees it (plain text, agent's language).
+export function templateText(env, t) {
+  const A = AL(env), al = agentLang(env), f = t.fields, n = nights(f.date_from, f.date_to);
   return [
-    `SOʻROV #${t.code}`,
-    `Yoʻnalish: ${f.origin || 'Toshkent'} → ${f.destination}`,
-    `Sanalar: ${dshort(f.date_from)} – ${dshort(f.date_to)}${n != null ? ` (${n} kecha)` : ''}`,
-    `Yoʻlovchilar: ${f.travelers}${f.traveler_names ? ` (${f.traveler_names})` : ''}`,
-    `Parvoz: ${f.flight_pref || 'farqi yoʻq'}`,
-    `Bagaj: ${f.baggage || '1 x 23 kg'}`,
-    `Mehmonxona: ${f.hotel || 'farqi yoʻq'}`,
-    `Byudjet: ${f.budget || 'belgilanmagan'}`,
-    f.notes ? `Izoh: ${f.notes}` : null,
-    'Iltimos, har bir variantni alohida yozing: reyslar, mehmonxona, umumiy narx, bekor qilish shartlari.',
+    `${A.request} #${t.code}`,
+    `${A.route}: ${f.origin || A.origin} → ${f.destination}`,
+    `${A.dates}: ${dshort(f.date_from, al)} – ${dshort(f.date_to, al)}${n != null ? ` (${A.nights(n)})` : ''}`,
+    `${A.travelers}: ${f.travelers}${f.traveler_names ? ` (${f.traveler_names})` : ''}`,
+    `${A.flight}: ${f.flight_pref || A.noPref}`,
+    `${A.baggage}: ${f.baggage || '1 x 23 kg'}`,
+    `${A.hotel}: ${f.hotel || A.noPref}`,
+    `${A.budget}: ${f.budget || A.notSet}`,
+    f.notes ? `${A.notes}: ${f.notes}` : null,
+    A.ask,
   ].filter(Boolean).join('\n');
 }
 
-function draftText(t) {
+function draftText(L, lang, t) {
   const f = t.fields, n = nights(f.date_from, f.date_to);
   return [
-    `<b>Soʻrovingizni tekshiring</b> · ${t.code}`, '',
-    `Yoʻnalish: ${esc(f.origin || 'Toshkent')} → ${esc(f.destination)}`,
-    `Sanalar: ${dshort(f.date_from)} – ${dshort(f.date_to)}${n != null ? ` (${n} kecha)` : ''}`,
-    `Yoʻlovchilar: ${esc(f.travelers)}${f.traveler_names ? ` (${esc(f.traveler_names)})` : ''}`,
-    `Parvoz: ${esc(f.flight_pref || 'farqi yoʻq')}`,
-    `Bagaj: ${esc(f.baggage || '1 x 23 kg')}`,
-    `Mehmonxona: ${esc(f.hotel || 'farqi yoʻq')}`,
-    `Byudjet: ${esc(f.budget || 'belgilanmagan')}`,
-    f.notes ? `Izoh: ${esc(f.notes)}` : null, '',
-    '<i>Pasportingiz siz variant tanlamaguningizcha shifrlangan holda saqlanadi.</i>',
+    `<b>${L.checkTitle}</b> · ${t.code}`, '',
+    `${L.route}: ${esc(f.origin || L.origin)} → ${esc(f.destination)}`,
+    `${L.dates}: ${dshort(f.date_from, lang)} – ${dshort(f.date_to, lang)}${n != null ? ` (${L.nights(n)})` : ''}`,
+    `${L.travelers}: ${esc(f.travelers)}${f.traveler_names ? ` (${esc(f.traveler_names)})` : ''}`,
+    `${L.flight}: ${esc(f.flight_pref || L.noPref)}`,
+    `${L.baggage}: ${esc(f.baggage || '1 x 23 kg')}`,
+    `${L.hotel}: ${esc(f.hotel || L.noPref)}`,
+    `${L.budget}: ${esc(f.budget || L.notSet)}`,
+    f.notes ? `${L.notes}: ${esc(f.notes)}` : null, '',
+    `<i>${L.passportNote}</i>`,
   ].filter((x) => x !== null).join('\n');
 }
 
-function compareText(t) {
-  const out = [`<b>${t.offers.length} ta variant · ${esc(t.fields.destination)}</b> · ${t.code}`];
+function compareText(L, lang, t) {
+  const out = [`<b>${L.nOptions(t.offers.length)} · ${esc(t.fields.destination)}</b> · ${t.code}`];
   t.offers.forEach((o, i) => {
-    out.push('', `<b>${esc(o.label)}</b> · ${esc(money(o))}${i === t.recommended ? ' · <u>tavsiya etiladi</u>' : ''}`,
-      `Parvoz: ${esc([o.airline, o.outbound, o.stops].filter(Boolean).join(' · ') || 'koʻrsatilmagan')}`,
-      o.return ? `Qaytish: ${esc(o.return)}` : null,
-      `Mehmonxona: ${esc([o.hotel, o.distance].filter(Boolean).join(' · ') || 'koʻrsatilmagan')}`,
-      `Bekor qilish: ${esc(refundWord(o.refund))}${o.refund_note ? ` (${esc(o.refund_note)})` : ''}`);
+    out.push('', `<b>${esc(o.label)}</b> · ${esc(money(o, lang))}${i === t.recommended ? ` · <u>${L.recommended}</u>` : ''}`,
+      `${L.flight}: ${esc([o.airline, o.outbound, o.stops].filter(Boolean).join(' · ') || L.notStated)}`,
+      o.return ? `${L.back}: ${esc(o.return)}` : null,
+      `${L.hotel}: ${esc([o.hotel, o.distance].filter(Boolean).join(' · ') || L.notStated)}`,
+      `${L.cancellation}: ${esc(refundWord(o.refund, lang))}${o.refund_note ? ` (${esc(o.refund_note)})` : ''}`);
   });
-  if (t.recommended != null && t.reason && t.offers[t.recommended]) out.push('', `<i>Nega ${esc(t.offers[t.recommended].label)}: ${esc(t.reason)}</i>`);
+  if (t.recommended != null && t.reason && t.offers[t.recommended]) out.push('', `<i>${L.why(esc(t.offers[t.recommended].label))}: ${esc(t.reason)}</i>`);
   return out.filter((x) => x !== null).join('\n');
 }
 
-async function tripText(env, t) {
+async function tripText(env, L, lang, t) {
   const o = t.offers[t.chosen] || {}, f = t.fields;
   const rem = await all(env, 'SELECT * FROM reminders WHERE trip_id = ? ORDER BY due_at', t.id);
   return [
-    `<b>Bron qilindi: ${esc(f.origin || 'Toshkent')} → ${esc(f.destination)}</b> · ${t.code}`, '',
-    `Ketish: ${dshort(f.date_from)}${o.outbound ? ' · ' + esc(o.outbound) : ''}${o.airline ? ' · ' + esc(o.airline) : ''}`,
-    `Qaytish: ${o.return ? esc(o.return) : dshort(f.date_to)}`,
-    `Mehmonxona: ${esc([o.hotel, o.distance].filter(Boolean).join(' · ') || 'vaucherga qarang')}`,
-    `Jami: ${esc(money(o))} · ${esc(refundWord(o.refund))}`, '',
-    rem.length ? 'Eslatmalar:\n' + rem.map((r) => `· ${r.type === 'checkin' ? 'onlayn roʻyxatdan oʻtish' : 'aeroportga yoʻl olish'}: ${fmtLocal(env, r.due_at)}`).join('\n')
-      : 'Reys vaqti topilmadi, shuning uchun eslatmalar qoʻyilmadi.',
+    `<b>${L.booked}: ${esc(f.origin || L.origin)} → ${esc(f.destination)}</b> · ${t.code}`, '',
+    `${L.out}: ${dshort(f.date_from, lang)}${o.outbound ? ' · ' + esc(o.outbound) : ''}${o.airline ? ' · ' + esc(o.airline) : ''}`,
+    `${L.back}: ${o.return ? esc(o.return) : dshort(f.date_to, lang)}`,
+    `${L.hotel}: ${esc([o.hotel, o.distance].filter(Boolean).join(' · ') || L.seeVoucher)}`,
+    `${L.total}: ${esc(money(o, lang))} · ${esc(refundWord(o.refund, lang))}`, '',
+    rem.length ? `${L.reminders}:\n` + rem.map((r) => `· ${r.type === 'checkin' ? L.remCheckin : L.remLeave}: ${fmtLocal(env, r.due_at, lang)}`).join('\n')
+      : L.noFlightTime,
   ].join('\n');
 }
 
-const STEPS = [['draft', 'Tasdiqlashingiz kutilmoqda'], ['sent', 'Agentda'], ['offers', 'Variantlar tayyor, tanlov sizda'], ['chosen', 'Agent bron qilmoqda'], ['booked', 'Bron qilindi, hujjatlar tayyor'], ['done', 'Safar yakunlandi']];
-function statusText(env, t) {
-  const cur = STEPS.findIndex(([s]) => s === t.status);
-  const lines = STEPS.map(([s, name], i) => (i < cur ? '✓ ' : i === cur ? '› <b>' : '· ') + name + (i === cur ? '</b>' : ''));
-  if (t.status === 'collecting') lines.unshift('› <b>Maʼlumotlar yigʻilmoqda</b>');
-  if (t.status === 'sent' && t.due_at) lines.push('', `Agent javobi kutilmoqda: ${fmtLocal(env, t.due_at)} gacha.`);
-  return `<b>${esc(t.fields.destination || 'Safar')}</b> · ${t.code}\n\n` + lines.join('\n');
+const STEP_ORDER = ['draft', 'sent', 'offers', 'chosen', 'booked', 'done'];
+function statusText(env, L, lang, t) {
+  const cur = STEP_ORDER.indexOf(t.status);
+  const lines = STEP_ORDER.map((s, i) => (i < cur ? '✓ ' : i === cur ? '› <b>' : '· ') + L.steps[s] + (i === cur ? '</b>' : ''));
+  if (t.status === 'collecting') lines.unshift(`› <b>${L.collecting}</b>`);
+  if (t.status === 'sent' && t.due_at) lines.push('', L.agentDue(fmtLocal(env, t.due_at, lang)));
+  return `<b>${esc(t.fields.destination || L.trip)}</b> · ${t.code}\n\n` + lines.join('\n');
 }
 
-const mainMenu = () => kb([[['Yangi safar', 'nt']], [['Safarlarim', 'mt'], ['Holat', 'st']]]);
+const mainMenu = (L) => kb([[[L.menu[0], 'nt']], [[L.menu[1], 'mt'], [L.menu[2], 'st']]]);
+const route = (L, t) => `${esc(t.fields.origin || L.origin)} → ${esc(t.fields.destination)}`;
+
+// ======================= language =======================
+
+const askLanguage = (env, chat) => send(env, chat, PICK_TEXT, kb(PICK_BUTTONS));
+
+async function chooseLanguage(env, uid, chat, lang) {
+  await setLang(env, uid, lang);
+  await logEvent(env, 'owner', 'language', null, lang);
+  // The command menu in this chat follows the chosen language.
+  await tg(env, 'setMyCommands', { commands: COMMANDS[lang], scope: { type: 'chat', chat_id: chat } }).catch((e) => reportError(env, e, 'setMyCommands'));
+  const L = O[lang];
+  return send(env, chat, `${L.langSet}\n\n${L.help}`, mainMenu(L));
+}
 
 // ======================= owner messages =======================
 
@@ -117,7 +135,8 @@ function docMime(d) {
   return EXT_MIME[ext] || m;
 }
 
-async function mediaOf(env, msg) {
+// tooLarge: the message to show when the file is over the limit.
+async function mediaOf(env, msg, tooLarge) {
   let fileId, mime, size;
   if (msg.voice) ({ file_id: fileId, file_size: size } = msg.voice), (mime = msg.voice.mime_type || 'audio/ogg');
   else if (msg.audio) ({ file_id: fileId, file_size: size } = msg.audio), (mime = msg.audio.mime_type || 'audio/mpeg');
@@ -125,7 +144,7 @@ async function mediaOf(env, msg) {
   else if (msg.video_note) ({ file_id: fileId, file_size: size } = msg.video_note), (mime = 'video/mp4');
   else if (msg.document && /^(application\/pdf|image\/|audio\/)/.test(docMime(msg.document))) ({ file_id: fileId, file_size: size } = msg.document), (mime = docMime(msg.document));
   if (!fileId) return [];
-  if (size && size > MAX_MEDIA) throw Object.assign(new Error('file too large'), { userText: 'Bu fayl juda katta. Iltimos, 15 MB dan kichik fayl yuboring.' });
+  if (size && size > MAX_MEDIA) throw Object.assign(new Error('file too large'), { userText: tooLarge });
   return [{ mime, b64: b64(await download(env, fileId)) }];
 }
 
@@ -136,9 +155,13 @@ export async function handleOwnerMessage(env, msg) {
   if (text.startsWith('/')) return ownerCommand(env, msg, text);
   if (!isOwner(env, uid)) return send(env, chat, 'You are set up as admin only. Admin commands: /trips /trip /log /jobs /now /fire /setstatus');
 
+  const lang = await getLang(env, uid);
+  if (!lang) return askLanguage(env, chat);
+  const L = O[lang];
+
   let media;
-  try { media = await mediaOf(env, msg); } catch (e) { if (e.userText) return send(env, chat, e.userText); throw e; }
-  if (!text && !media.length) return send(env, chat, 'Men matn, ovozli xabar, audio fayl, dumaloq video, rasm va PDF fayllarni oʻqiy olaman.');
+  try { media = await mediaOf(env, msg, L.tooLarge); } catch (e) { if (e.userText) return send(env, chat, e.userText); throw e; }
+  if (!text && !media.length) return send(env, chat, L.canRead);
 
   const t = await activeTrip(env, uid);
 
@@ -147,38 +170,39 @@ export async function handleOwnerMessage(env, msg) {
     let said = text;
     if (!said && media.length && /^(audio|video)\//.test(media[0].mime)) { await typing(env, chat); said = await transcribe(env, media); }
     if (CANCEL.test(said)) return askCancel(env, t);
-    if (STATUS.test(said)) return send(env, chat, statusText(env, t));
-    await toAgent(env, t, `Azizbekdan ${t.code} boʻyicha izoh:\n"${said || '(fayl biriktirilgan)'}"`, 'note');
+    if (STATUS.test(said)) return send(env, chat, statusText(env, L, lang, t));
+    const A = AL(env);
+    await toAgent(env, t, `${A.note(t.code)}\n"${said || A.fileAttached}"`, 'note');
     if (!isMock(env) && media.length && !said) await tg(env, 'forwardMessage', { chat_id: env.AGENT_CHAT_ID, from_chat_id: chat, message_id: msg.message_id, ...(t.agent_thread_id ? { message_thread_id: t.agent_thread_id } : {}) });
-    return send(env, chat, 'Agentga yetkazdim.');
+    return send(env, chat, L.passedOn);
   }
   if (t && ['collecting', 'draft'].includes(t.status) && CANCEL.test(text) && text.length < 60) return cancelTrip(env, t, 'owner');
 
-  return buildRequest(env, uid, chat, t, text, media);
+  return buildRequest(env, uid, chat, t, text, media, L, lang);
 }
 
-async function buildRequest(env, uid, chat, t, text, media) {
+async function buildRequest(env, uid, chat, t, text, media, L, lang) {
   if (!t) t = await createTrip(env, uid);
   await typing(env, chat);
   let r;
-  try { r = await parseRequest(env, t.fields, text, media); }
-  catch (e) { await reportError(env, e, 'parseRequest'); return send(env, chat, 'Hozir buni oʻqiy olmadim. Iltimos, bir daqiqadan soʻng qayta urinib koʻring.'); }
+  try { r = await parseRequest(env, t.fields, text, media, lang); }
+  catch (e) { await reportError(env, e, 'parseRequest'); return send(env, chat, L.readFail); }
 
   for (const k of FIELD_KEYS) if (r[k] != null && r[k] !== '') t.fields[k] = r[k];
   for (const k of ['date_from', 'date_to']) if (t.fields[k] && !/^\d{4}-\d{2}-\d{2}$/.test(t.fields[k])) delete t.fields[k];
-  t.fields.origin ||= 'Toshkent';
+  t.fields.origin ||= L.origin;
   t.fields.baggage ||= '1 x 23 kg';
   await logEvent(env, 'owner', 'request_input', t.id, { text, media: media.map((m) => m.mime), transcript: r.transcript || null });
 
-  const heard = r.transcript ? `<i>Eshitdim: «${esc(r.transcript)}»</i>\n\n` : '';
+  const heard = r.transcript ? `<i>${L.heard}: «${esc(r.transcript)}»</i>\n\n` : '';
   const missing = REQUIRED.filter((k) => !t.fields[k]);
   if (missing.length) {
     if (t.status !== 'collecting') await setStatus(env, t, 'collecting', 'owner'); else await saveTrip(env, t);
-    return send(env, chat, heard + esc(r.question || `Soʻrovni tayyorlash uchun yana kerak: ${missing.map((k) => LABEL[k]).join(', ')}.`));
+    return send(env, chat, heard + esc(r.question || L.needMore(missing.map((k) => L.field[k]).join(', '))));
   }
   t.draft_at = Date.now(); t.nudged = 0;
   await setStatus(env, t, 'draft', 'owner');
-  return send(env, chat, heard + draftText(t), kb([[['Tasdiqlash va agentga yuborish', `ap:${t.id}`]], [['Tahrirlash', `ed:${t.id}`], ['Bekor qilish', `cx:${t.id}`]]]));
+  return send(env, chat, heard + draftText(L, lang, t), kb([[[L.btnApprove, `ap:${t.id}`]], [[L.btnEdit, `ed:${t.id}`], [L.btnCancel, `cx:${t.id}`]]]));
 }
 
 // ======================= commands =======================
@@ -192,30 +216,36 @@ async function ownerCommand(env, msg, text) {
   if (isAdmin(env, uid) && ADMIN[c]) return ADMIN[c](env, chat, arg);
   if (!isOwner(env, uid)) return;
 
+  if (c === '/uz' || c === '/ru') return chooseLanguage(env, uid, chat, c.slice(1));
+  if (c === '/lang' || c === '/language') return askLanguage(env, chat);
+  const lang = await getLang(env, uid);
+  if (!lang) return askLanguage(env, chat); // first contact: pick a language before anything else
+  const L = O[lang];
+
   switch (c) {
     case '/start':
     case '/help':
-      return send(env, chat, 'Assalomu alaykum! Men sizning safar yordamchingizman. Qayerga va qachon borishingiz kerakligini matn yoki ovozli xabar bilan yozing — oʻzbek, rus yoki ingliz tilida. Men soʻrovni tayyorlayman, sayohat agentingiz bilan ishlayman, chiptalar va eslatmalarni shu yerda saqlayman.\n\n/passport — pasport maʼlumotlarini saqlash (shifrlangan holda)\n/status — joriy safar holati\n/trips — safarlaringiz\n/cancel — joriy safarni bekor qilish', mainMenu());
-    case '/new': return send(env, chat, 'Qayerga va qachon borishingiz kerak?');
-    case '/status': { const t = await activeTrip(env, uid); return send(env, chat, t ? statusText(env, t) : 'Hozir faol safar yoʻq. Qayerga va qachon borishingiz kerakligini yozing.'); }
-    case '/trips': return myTrips(env, uid, chat);
-    case '/cancel': { const t = await activeTrip(env, uid); return t ? askCancel(env, t) : send(env, chat, 'Bekor qilinadigan safar yoʻq.'); }
+      return send(env, chat, L.help, mainMenu(L));
+    case '/new': return send(env, chat, L.whereWhen);
+    case '/status': { const t = await activeTrip(env, uid); return send(env, chat, t ? statusText(env, L, lang, t) : L.noTripTell); }
+    case '/trips': return myTrips(env, L, lang, uid, chat);
+    case '/cancel': { const t = await activeTrip(env, uid); return t ? askCancel(env, t) : send(env, chat, L.noCancel); }
     case '/passport': {
-      if (!arg) return send(env, chat, 'Bitta xabarda yuboring, masalan:\n<code>/passport AZIZBEK UBAYDULLAYEV, FA1234567, 2031-05-01 gacha amal qiladi</code>\nMen uni shifrlab saqlayman, xabaringizni oʻchiraman va agentga faqat siz variant tanlaganingizdan keyin beraman.');
+      if (!arg) return send(env, chat, L.passportHow);
       await run(env, 'INSERT INTO travelers (telegram_id, name, passport_enc, updated_at) VALUES (?, ?, ?, ?) ON CONFLICT(telegram_id) DO UPDATE SET passport_enc = excluded.passport_enc, updated_at = excluded.updated_at',
         uid, msg.from.first_name || null, await encrypt(env, arg), Date.now());
       await logEvent(env, 'owner', 'passport_saved');
       await tg(env, 'deleteMessage', { chat_id: chat, message_id: msg.message_id }).catch(() => {});
-      return send(env, chat, 'Pasport saqlandi va shifrlandi. Xabaringizni bu chatdan oʻchirdim.');
+      return send(env, chat, L.passportSaved);
     }
-    default: return send(env, chat, 'Bunday buyruqni bilmayman. /help ni bosing.');
+    default: return send(env, chat, L.unknownCmd);
   }
 }
 
-async function myTrips(env, uid, chat) {
+async function myTrips(env, L, lang, uid, chat) {
   const rows = await all(env, 'SELECT id, status, fields FROM trips WHERE owner_id = ? ORDER BY id DESC LIMIT 10', uid);
-  if (!rows.length) return send(env, chat, 'Hali safarlar yoʻq. Qayerga va qachon borishingiz kerakligini yozing.');
-  return send(env, chat, '<b>Safarlaringiz</b>\n' + rows.map((r) => { const f = JSON.parse(r.fields || '{}'); return `${code(r.id)} · ${esc(f.destination || '?')} · ${dshort(f.date_from)} · ${STATUS_UZ[r.status] || r.status}`; }).join('\n'));
+  if (!rows.length) return send(env, chat, L.noTripsYet);
+  return send(env, chat, `<b>${L.yourTrips}</b>\n` + rows.map((r) => { const f = JSON.parse(r.fields || '{}'); return `${code(r.id)} · ${esc(f.destination || '?')} · ${dshort(f.date_from, lang)} · ${L.statusWord[r.status] || r.status}`; }).join('\n'));
 }
 
 const ADMIN = {
@@ -265,18 +295,20 @@ export async function handleCallback(env, cq) {
   const uid = cq.from.id, chat = cq.message?.chat.id, data = cq.data || '';
   const answer = (text) => tg(env, 'answerCallbackQuery', { callback_query_id: cq.id, ...(text ? { text } : {}) }).catch(() => {});
   const dropKeyboard = () => tg(env, 'editMessageReplyMarkup', { chat_id: chat, message_id: cq.message.message_id, reply_markup: { inline_keyboard: [] } }).catch(() => {});
-  if (!isOwner(env, uid)) return answer('Ruxsat yoʻq.');
+  const { lang, L } = await strings(env, uid);
+  if (!isOwner(env, uid)) return answer(L.notAllowed);
 
   const [a, idStr, argStr] = data.split(':');
-  if (a === 'nt') { await answer(); return send(env, chat, 'Qayerga va qachon borishingiz kerak? Matn yoki ovozli xabar yuboring.'); }
-  if (a === 'mt') { await answer(); return myTrips(env, uid, chat); }
-  if (a === 'st') { await answer(); const t = await activeTrip(env, uid); return send(env, chat, t ? statusText(env, t) : 'Hozir faol safar yoʻq.'); }
+  if (a === 'lg') { await answer(); await dropKeyboard(); return chooseLanguage(env, uid, chat, idStr); }
+  if (a === 'nt') { await answer(); return send(env, chat, L.whereWhenVoice); }
+  if (a === 'mt') { await answer(); return myTrips(env, L, lang, uid, chat); }
+  if (a === 'st') { await answer(); const t = await activeTrip(env, uid); return send(env, chat, t ? statusText(env, L, lang, t) : L.noTrip); }
   if (a === 'doc') { await answer(); const d = await one(env, 'SELECT * FROM documents WHERE id = ?', +idStr); return d && tg(env, 'sendDocument', { chat_id: chat, document: d.file_id, caption: d.name }); }
 
   const t = await getTrip(env, +idStr);
   const need = { ap: 'draft', ed: 'draft', cx: 'draft', ch: 'offers', ot: 'offers' }[a];
   if (!t || t.owner_id !== uid || (need && t.status !== need) || (['cy', 'cn'].includes(a) && !['collecting', ...WITH_AGENT, 'draft'].includes(t.status))) {
-    await answer('Bu tugma eskirgan.');
+    await answer(L.staleBtn);
     return dropKeyboard();
   }
   await answer();
@@ -285,9 +317,9 @@ export async function handleCallback(env, cq) {
     case 'ap': return approve(env, t);
     case 'ed':
       await setStatus(env, t, 'collecting', 'owner');
-      return send(env, chat, 'Nimani oʻzgartiray? Masalan: «13–16-noyabrga oʻzgartir» yoki «ikkinchi yoʻlovchi qilib Boburni qoʻsh».');
+      return send(env, chat, L.editWhat);
     case 'cx': case 'cy': return cancelTrip(env, t, 'owner');
-    case 'cn': return send(env, chat, 'Yaxshi, hech narsa oʻzgarmadi.');
+    case 'cn': return send(env, chat, L.nothingChanged);
     case 'ch': return choose(env, t, +argStr);
     case 'ot': return otherOptions(env, t);
   }
@@ -296,55 +328,61 @@ export async function handleCallback(env, cq) {
 // ======================= transitions =======================
 
 async function approve(env, t) {
+  const { lang, L } = await strings(env, t.owner_id);
   t.sent_at = Date.now();
   t.due_at = t.sent_at + (Number(env.AGENT_SLA_MIN) || 240) * MIN;
   t.sla_reminded = 0; t.clarify_asked = 0; t.agent_texts = []; t.offers = [];
   await setStatus(env, t, 'sent', 'owner');
   await openAgentThread(env, t);
-  await toAgent(env, t, templateText(t), 'request');
-  return send(env, t.owner_id, `Agentga yuborildi. Variantlar kelishi bilan xabar beraman (${fmtLocal(env, t.due_at)} gacha kutilmoqda).`);
+  await toAgent(env, t, templateText(env, t), 'request');
+  return send(env, t.owner_id, L.sentToAgent(fmtLocal(env, t.due_at, lang)));
 }
 
 async function choose(env, t, i) {
+  const { L } = await strings(env, t.owner_id);
+  const A = AL(env);
   const o = t.offers[i];
-  if (!o) return send(env, t.owner_id, 'Bu variant endi mavjud emas.');
+  if (!o) return send(env, t.owner_id, L.optionGone);
   t.chosen = i;
   await setStatus(env, t, 'chosen', 'owner');
-  await toAgent(env, t, `Azizbek tanladi: ${o.label} (${money(o)}). Iltimos, bron qiling va chipta hamda vaucherni shu yerga yuboring.`, 'choice');
+  await toAgent(env, t, A.chose(o.label, money(o, agentLang(env))), 'choice');
 
   const trav = await one(env, 'SELECT passport_enc FROM travelers WHERE telegram_id = ?', t.owner_id);
   if (trav?.passport_enc) {
     const passport = await decrypt(env, trav.passport_enc);
     await logEvent(env, 'bot', 'passport_released_to_agent', t.id);
-    await toAgent(env, t, `${t.code} uchun pasport maʼlumotlari:\n${passport}`, 'passport');
+    await toAgent(env, t, `${A.passport(t.code)}\n${passport}`, 'passport');
   } else {
-    await toAgent(env, t, `${t.code} uchun pasport maʼlumotlari hali yoʻq. Azizbek ularni oʻzi yuboradi.`, 'ack');
-    await send(env, t.owner_id, 'Pasport maʼlumotlaringiz menda yoʻq. Ularni /passport orqali yuboring yoki agentga bevosita bering.');
+    await toAgent(env, t, A.noPassport(t.code), 'ack');
+    await send(env, t.owner_id, L.noPassport);
   }
-  return send(env, t.owner_id, `Tayyor. Agent bron qilmoqda: ${esc(o.label)}. Chipta va vaucher tayyor boʻlgach, shu yerda paydo boʻladi.`);
+  return send(env, t.owner_id, L.booking(esc(o.label)));
 }
 
 async function otherOptions(env, t) {
+  const { L } = await strings(env, t.owner_id);
   t.offers = []; t.agent_texts = []; t.clarify_asked = 0; t.recommended = null; t.reason = null;
   t.sent_at = Date.now(); t.due_at = t.sent_at + (Number(env.AGENT_SLA_MIN) || 240) * MIN; t.sla_reminded = 0;
   await setStatus(env, t, 'sent', 'owner');
-  await toAgent(env, t, `Azizbek ${t.code} boʻyicha boshqa variantlarni soʻramoqda, soʻrov oʻsha:\n\n${templateText(t)}`, 'other');
-  return send(env, t.owner_id, 'Agentdan boshqa variantlarni soʻradim.');
+  await toAgent(env, t, `${AL(env).other(t.code)}\n\n${templateText(env, t)}`, 'other');
+  return send(env, t.owner_id, L.askedOther);
 }
 
 async function askCancel(env, t) {
+  const { lang, L } = await strings(env, t.owner_id);
   const o = t.chosen != null ? t.offers[t.chosen] : null;
-  let txt = `${t.code} — ${esc(t.fields.destination || '?')} safarini bekor qilaymi?`;
-  if (o && ['chosen', 'booked'].includes(t.status)) txt += `\n${esc(o.label)} boʻyicha bekor qilish shartlari: ${esc(refundWord(o.refund))}${o.refund_note ? ` (${esc(o.refund_note)})` : ''}.`;
-  return send(env, t.owner_id, txt, kb([[['Ha, bekor qilish', `cy:${t.id}`], ['Qoldirish', `cn:${t.id}`]]]));
+  let txt = L.cancelQ(t.code, esc(t.fields.destination || '?'));
+  if (o && ['chosen', 'booked'].includes(t.status)) txt += '\n' + L.cancelTerms(esc(o.label), esc(refundWord(o.refund, lang)) + (o.refund_note ? ` (${esc(o.refund_note)})` : ''));
+  return send(env, t.owner_id, txt, kb([[[L.btnYesCancel, `cy:${t.id}`], [L.btnKeep, `cn:${t.id}`]]]));
 }
 
 async function cancelTrip(env, t, actor) {
+  const { L } = await strings(env, t.owner_id);
   const withAgent = WITH_AGENT.includes(t.status);
   await setStatus(env, t, 'cancelled', actor);
   await run(env, 'UPDATE jobs SET done_at = ? WHERE trip_id = ? AND done_at IS NULL', Date.now(), t.id);
-  if (withAgent) await toAgent(env, t, `Azizbek ${t.code} safarini bekor qildi. Iltimos, u boʻyicha qilingan bronlarni bekor qiling va shu yerda tasdiqlang.`, 'cancel');
-  return send(env, t.owner_id, `${t.code} safari bekor qilindi.${withAgent ? ' Agentga xabar berdim.' : ''}`);
+  if (withAgent) await toAgent(env, t, AL(env).cancel(t.code), 'cancel');
+  return send(env, t.owner_id, L.cancelled(t.code, withAgent));
 }
 
 // ======================= agent side =======================
@@ -366,7 +404,7 @@ export async function handleAgentMessage(env, msg) {
       return handleAgentDocs(env, t, [{ name: msg.document?.file_name || 'photo.jpg', file_id: d.file_id }], text);
     }
     let media = [];
-    try { media = await mediaOf(env, msg); } catch (e) { return send(env, env.AGENT_CHAT_ID, e.userText || 'Bu faylni oʻqiy olmadim.'); }
+    try { media = await mediaOf(env, msg, AL(env).unreadable); } catch (e) { return send(env, env.AGENT_CHAT_ID, e.userText || AL(env).unreadable); }
     return handleAgentText(env, t, text, media);
   }
   if (text) return handleAgentText(env, t, text, []);
@@ -379,9 +417,10 @@ async function getTripByThread(env, threadId) {
 
 // Used by both the real group and the mock agent.
 export async function handleAgentText(env, t, text, media) {
+  const { lang, L } = await strings(env, t.owner_id);
   await logEvent(env, 'agent', 'message', t.id, text || '(file)');
   if (['chosen', 'booked'].includes(t.status)) {
-    if (text) await send(env, t.owner_id, `<b>Agentdan xabar</b> · ${t.code}\n${esc(text)}`);
+    if (text) await send(env, t.owner_id, `<b>${L.agentMsg}</b> · ${t.code}\n${esc(text)}`);
     return;
   }
   if (!['sent', 'offers'].includes(t.status)) return;
@@ -390,43 +429,45 @@ export async function handleAgentText(env, t, text, media) {
   await saveTrip(env, t);
 
   let r;
-  try { r = await parseOffers(env, t.fields, t.agent_texts, media); }
-  catch (e) { await reportError(env, e, 'parseOffers'); return send(env, t.owner_id, `Agent ${t.code} boʻyicha javob berdi, lekin uni oʻqiy olmadim. Agentning xabari:\n${esc(text || '(fayl)')}`); }
+  try { r = await parseOffers(env, t.fields, t.agent_texts, media, lang); }
+  catch (e) { await reportError(env, e, 'parseOffers'); return send(env, t.owner_id, `${L.agentUnreadable(t.code)}\n${esc(text || L.file)}`); }
 
   const offers = Array.isArray(r.offers) ? r.offers.slice(0, 5) : [];
   if (!offers.length) {
-    return send(env, t.owner_id, `<b>Agent yozdi</b> · ${t.code}\n${esc(text || '(fayl)')}`);
+    return send(env, t.owner_id, `<b>${L.agentWrote}</b> · ${t.code}\n${esc(text || L.file)}`);
   }
   if (media.length) t.agent_texts.push('[Options read from the agent’s attachment] ' + JSON.stringify(offers));
   t.offers = offers;
   t.recommended = Number.isInteger(r.recommended) && offers[r.recommended] ? r.recommended : null;
   t.reason = r.reason || null;
 
+  const A = AL(env);
   const gaps = [];
   offers.forEach((o) => {
     const g = [];
-    if (o.total_price == null) g.push('umumiy narx');
-    if (!o.outbound) g.push('reys vaqtlari');
-    if (!o.refund || o.refund === 'unknown') g.push('bekor qilish shartlari');
+    if (o.total_price == null) g.push(A.gap.price);
+    if (!o.outbound) g.push(A.gap.times);
+    if (!o.refund || o.refund === 'unknown') g.push(A.gap.terms);
     if (g.length) gaps.push(`${o.label}: ${g.join(', ')}`);
   });
   if (gaps.length && !t.clarify_asked) {
     t.clarify_asked = 1;
     await saveTrip(env, t);
-    await toAgent(env, t, `Rahmat. Azizbekka koʻrsatishdan oldin, iltimos, quyidagilarni qoʻshing:\n${gaps.join('\n')}`, 'clarify');
-    return send(env, t.owner_id, `${esc(t.fields.destination)} boʻyicha ${offers.length} ta variant keldi. Agentdan yetishmayotgan maʼlumotni soʻradim, kelishi bilan koʻrsataman.`);
+    await toAgent(env, t, `${A.clarify}\n${gaps.join('\n')}`, 'clarify');
+    return send(env, t.owner_id, L.offersPending(esc(t.fields.destination), offers.length));
   }
 
   t.offers_at = Date.now(); t.nudged_offers = 0;
   if (t.status !== 'offers') await setStatus(env, t, 'offers', 'agent'); else await saveTrip(env, t);
-  const rows = offers.map((o, i) => [[`${i === t.recommended ? '★ ' : ''}${o.label} · ${money(o)}`, `ch:${t.id}:${i}`]]);
-  rows.push([['Boshqa variantlarni soʻrash', `ot:${t.id}`]]);
-  return send(env, t.owner_id, compareText(t), kb(rows));
+  const rows = offers.map((o, i) => [[`${i === t.recommended ? '★ ' : ''}${o.label} · ${money(o, lang)}`, `ch:${t.id}:${i}`]]);
+  rows.push([[L.btnOther, `ot:${t.id}`]]);
+  return send(env, t.owner_id, compareText(L, lang, t), kb(rows));
 }
 
 // docs: [{ name, file_id }] from a real agent, or [{ name, bytes, mime }] from the mock agent.
 export async function handleAgentDocs(env, t, docs, caption = '') {
   if (!['chosen', 'booked'].includes(t.status)) return;
+  const { lang, L } = await strings(env, t.owner_id);
   for (const d of docs) {
     const m = d.file_id
       ? await tg(env, 'sendDocument', { chat_id: t.owner_id, document: d.file_id, caption: d.name })
@@ -435,7 +476,7 @@ export async function handleAgentDocs(env, t, docs, caption = '') {
     await run(env, 'INSERT INTO documents (trip_id, name, file_id, created_at) VALUES (?, ?, ?, ?)', t.id, d.name, fid, Date.now());
   }
   await logEvent(env, 'agent', 'documents', t.id, docs.map((d) => d.name).join(', '));
-  if (caption) await send(env, t.owner_id, `<b>Agentdan:</b> ${esc(caption)}`);
+  if (caption) await send(env, t.owner_id, `<b>${L.fromAgent}:</b> ${esc(caption)}`);
   if (t.status === 'booked') return;
 
   const o = t.offers[t.chosen] || {};
@@ -449,10 +490,10 @@ export async function handleAgentDocs(env, t, docs, caption = '') {
       if (at > now) await run(env, 'INSERT INTO reminders (trip_id, type, due_at) VALUES (?, ?, ?)', t.id, type, at);
     }
   }
-  await send(env, t.owner_id, await tripText(env, t));
-  await tgUpload(env, 'sendDocument', { chat_id: t.owner_id, caption: 'Safarni kalendaringizga qoʻshish uchun faylni oching.' }, 'document', `${t.code}.ics`, tripIcs(t, o), 'text/calendar')
+  await send(env, t.owner_id, await tripText(env, L, lang, t));
+  await tgUpload(env, 'sendDocument', { chat_id: t.owner_id, caption: L.icsCaption }, 'document', `${t.code}.ics`, tripIcs(t, o, L), 'text/calendar')
     .catch((e) => reportError(env, e, 'send ics'));
-  await toAgent(env, t, 'Qabul qildim, rahmat. Azizbekka yuborildi.', 'ack');
+  await toAgent(env, t, AL(env).ack, 'ack');
 }
 
 // ======================= scheduled checks (cron) =======================
@@ -463,39 +504,44 @@ export async function runChecks(env) {
 
   for (const r of await all(env, `SELECT id FROM trips WHERE status = 'draft' AND nudged = 0 AND draft_at <= ?`, now - nudge)) {
     const t = await getTrip(env, r.id); t.nudged = 1; await saveTrip(env, t);
+    const { L } = await strings(env, t.owner_id);
     await logEvent(env, 'cron', 'nudge_draft', t.id);
-    await send(env, t.owner_id, `${esc(t.fields.destination)} safari boʻyicha ${t.code} soʻrovi hali tasdiqlashingizni kutmoqda.`, kb([[['Tasdiqlash va yuborish', `ap:${t.id}`]]]));
+    await send(env, t.owner_id, L.nudgeDraft(esc(t.fields.destination), t.code), kb([[[L.btnApproveShort, `ap:${t.id}`]]]));
   }
 
   for (const r of await all(env, `SELECT id FROM trips WHERE status = 'sent' AND sla_reminded = 0 AND due_at <= ?`, now)) {
     const t = await getTrip(env, r.id); t.sla_reminded = 1; await saveTrip(env, t);
+    const { L } = await strings(env, t.owner_id);
     await logEvent(env, 'cron', 'agent_late', t.id);
-    await toAgent(env, t, `Eslatma: ${t.code} soʻrovi ${fmtLocal(env, t.sent_at)} dan beri variantlarni kutmoqda.`, 'sla');
-    await send(env, t.owner_id, `Agent ${t.code} boʻyicha hali javob bermadi. Unga eslatma yubordim.`);
+    await toAgent(env, t, AL(env).sla(t.code, fmtLocal(env, t.sent_at, agentLang(env))), 'sla');
+    await send(env, t.owner_id, L.agentLate(t.code));
   }
 
   for (const r of await all(env, `SELECT id FROM trips WHERE status = 'offers' AND nudged_offers = 0 AND offers_at <= ?`, now - nudge)) {
     const t = await getTrip(env, r.id); t.nudged_offers = 1; await saveTrip(env, t);
+    const { L } = await strings(env, t.owner_id);
     await logEvent(env, 'cron', 'nudge_offers', t.id);
-    await send(env, t.owner_id, `${esc(t.fields.destination)} (${t.code}) boʻyicha variantlar tanlovingizni kutmoqda. Narxlar oʻzgarishi mumkin, shuning uchun tezroq tanlagan maʼqul.`);
+    await send(env, t.owner_id, L.nudgeOffers(esc(t.fields.destination), t.code));
   }
 
   for (const rem of await all(env, `SELECT r.* FROM reminders r JOIN trips t ON t.id = r.trip_id WHERE r.sent_at IS NULL AND r.due_at <= ? AND t.status = 'booked'`, now)) {
     await run(env, 'UPDATE reminders SET sent_at = ? WHERE id = ?', now, rem.id);
     const t = await getTrip(env, rem.trip_id), o = t.offers[t.chosen] || {};
+    const { L } = await strings(env, t.owner_id);
     await logEvent(env, 'cron', 'reminder_' + rem.type, t.id);
     const doc = await one(env, 'SELECT id FROM documents WHERE trip_id = ? ORDER BY id LIMIT 1', t.id);
     if (rem.type === 'checkin') {
-      await send(env, t.owner_id, `Ertaga parvoz: ${esc(t.fields.origin || 'Toshkent')} → ${esc(t.fields.destination)}.\nReys: ${esc([o.airline, o.outbound].filter(Boolean).join(', ') || hmLocal(env, t.flight_at))}\nOnlayn roʻyxatdan oʻtish hozir ochiq boʻlishi kerak.`, doc ? kb([[['Chiptani ochish', `doc:${doc.id}`]]]) : {});
+      await send(env, t.owner_id, L.checkin(route(L, t), esc([o.airline, o.outbound].filter(Boolean).join(', ') || hmLocal(env, t.flight_at))), doc ? kb([[[L.btnTicket, `doc:${doc.id}`]]]) : {});
     } else {
-      await send(env, t.owner_id, `Reysingiz (${esc(t.fields.origin || 'Toshkent')} → ${esc(t.fields.destination)}) soat ${hmLocal(env, t.flight_at)} da, 3 soatdan keyin. Aeroportga yoʻl olish vaqti boʻldi.`);
+      await send(env, t.owner_id, L.leave(route(L, t), hmLocal(env, t.flight_at)));
     }
   }
 
   for (const r of await all(env, `SELECT id FROM trips WHERE status = 'booked' AND done_at IS NOT NULL AND done_at <= ?`, now)) {
     const t = await getTrip(env, r.id);
+    const { L } = await strings(env, t.owner_id);
     await setStatus(env, t, 'done', 'cron');
-    await send(env, t.owner_id, `Safardan eson-omon qaytganingiz bilan! ${esc(t.fields.destination)} safari (${t.code}) yopildi; uni /trips da topishingiz mumkin.`);
+    await send(env, t.owner_id, L.welcomeBack(esc(t.fields.destination), t.code));
   }
 
   await run(env, 'DELETE FROM updates WHERE ts < ?', now - 2 * DAY);

@@ -25,6 +25,7 @@ trip-bot/                 the bot (deploy this)
   src/telegram.js         Bot API client
   src/util.js             D1 helpers, time (TZ offset), HTML escaping, AES-GCM passport encryption
   src/files.js            .ics calendar file, tiny PDF generator for the mock tickets
+  src/i18n.js             every user-facing string, Uzbek and Russian (owner: O[lang]; agent: A[AGENT_LANG])
   schema.sql              D1 schema (already applied to the live database)
   test/run.mjs            end-to-end test: fake Telegram and Gemini, better-sqlite3 as D1, fake clock
   wrangler.toml           config; D1 id filled in; OWNER_ID and ADMIN_ID empty
@@ -51,7 +52,7 @@ any open state -> cancelled
 
 ## Cloudflare state (live, in the user's account)
 
-- D1 `trip-bot`, id `a6b9448f-7127-4913-9ea5-bc786dddc799`, region EEUR. All tables from `schema.sql` are created and empty.
+- D1 `trip-bot`, id `a6b9448f-7127-4913-9ea5-bc786dddc799`, region EEUR. All tables from `schema.sql` are created, including `prefs` (added later through the connector).
 - Worker `trip-bot` deployed at https://trip-bot.zsayidfozil.workers.dev; secrets set; webhook set (bot `@trip_t_est_bot`). The deploy API token has no D1 permission; query D1 through the Cloudflare connector.
 
 ## Next steps, in order
@@ -87,7 +88,7 @@ The local test fakes Telegram and Gemini, so these still need checking live:
 
 ## Known gaps and possible next work
 
-- **Language.** Done: everything Azizbek and the agent see is Uzbek (Latin script, with ʻ/ʼ): fixed messages, buttons, dates, the command menu, the `.ics` file, Gemini's questions, request fields and option summaries, and the mock agent. Admin command output and error alerts stay English (for the maintainer). The mock PDFs are English/ASCII (the tiny PDF writer has no Unicode font).
+- **Language.** Two languages, Uzbek (Latin script) and Russian. The first message or `/start` shows a picker (🇺🇿 / 🇷🇺 buttons); `/uz`, `/ru` switch, `/lang` shows the picker again. The choice is stored per person in the `prefs` table and drives fixed messages, buttons, dates, the per-chat command menu, the `.ics` file, and what Gemini writes (questions, request fields, option summaries). Messages to the travel agent use `AGENT_LANG` (default `uz`), as does the mock agent. Admin output and error alerts stay English. Mock PDFs: Uzbek (apostrophes written as `'`), or English in Russian mode because the PDF's built-in font has no Cyrillic.
 - **Pausing the agent.** There's no way to tell the mock agent to stop other than cancelling the trip.
 - **Missing flight time.** If the chosen offer has no `outbound_datetime`, no reminders are set; the bot says so, but there's no command to add the time later.
 - **One trip at a time.** Only one open trip per owner (`activeTrip` takes the newest).

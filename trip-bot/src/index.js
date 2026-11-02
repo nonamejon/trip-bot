@@ -4,6 +4,7 @@
 //   cron (every minute)    mock agent replies, reminders, agent-late checks
 
 import { run, esc } from './util.js';
+import { COMMANDS, STRANGER, AL } from './i18n.js';
 import { tg, send } from './telegram.js';
 import { handleOwnerMessage, handleCallback, handleAgentMessage, runChecks, reportError } from './flow.js';
 import { runJobs } from './mock.js';
@@ -29,15 +30,9 @@ export default {
         url: `${url.origin}/telegram`, secret_token: env.WEBHOOK_SECRET,
         allowed_updates: ['message', 'callback_query'], drop_pending_updates: true,
       });
-      await tg(env, 'setMyCommands', {
-        commands: [
-          { command: 'status', description: 'Joriy safar holati' },
-          { command: 'trips', description: 'Safarlarim' },
-          { command: 'passport', description: 'Pasport maʼlumotlarini saqlash (shifrlangan)' },
-          { command: 'cancel', description: 'Joriy safarni bekor qilish' },
-          { command: 'help', description: 'Yordamchidan qanday foydalanish' },
-        ],
-      });
+      // Default menu in Uzbek, Russian for Russian-language Telegram apps; after /uz or /ru each chat gets its own.
+      await tg(env, 'setMyCommands', { commands: COMMANDS.uz });
+      await tg(env, 'setMyCommands', { commands: COMMANDS.ru, language_code: 'ru' });
       const me = await tg(env, 'getMe');
       return Response.json({ webhook_set: hook, bot: '@' + me.username, agent_mode: isMock(env) ? 'mock' : 'group' });
     }
@@ -66,12 +61,12 @@ async function handleUpdate(env, update) {
   if (msg.chat.type === 'private') {
     const known = [env.OWNER_ID, env.ADMIN_ID].filter(Boolean).map(String);
     if (!known.includes(String(msg.from.id))) {
-      return send(env, msg.chat.id, `Bu shaxsiy yordamchi.\nTelegram ID raqamingiz: <code>${esc(msg.from.id)}</code>. Agar bot siz uchun moʻljallangan boʻlsa, bu raqamni administratorga yuboring.`);
+      return send(env, msg.chat.id, STRANGER(esc(msg.from.id)));
     }
     return handleOwnerMessage(env, msg);
   }
 
   if (!isMock(env) && String(msg.chat.id) === String(env.AGENT_CHAT_ID)) return handleAgentMessage(env, msg);
 
-  if (msg.text?.startsWith('/chatid')) return send(env, msg.chat.id, `Bu chat ID raqami: <code>${esc(msg.chat.id)}</code> — uni AGENT_CHAT_ID ga yozing.`);
+  if (msg.text?.startsWith('/chatid')) return send(env, msg.chat.id, AL(env).chatId(esc(msg.chat.id)));
 }
