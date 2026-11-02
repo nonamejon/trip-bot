@@ -8,7 +8,7 @@ A private Telegram assistant for one person, Azizbek. He messages or voice-notes
 
 The person now working on it wants it cheap and minimal:
 - No VPS.
-- One Cloudflare Worker, D1, and Gemini on a paid key (a $5 deposit).
+- One Cloudflare Worker, D1, and Gemini 3.8 Flash on a billed key.
 - The real thing, not mock-ups or simulators.
 
 They prefer short, direct answers.
@@ -65,7 +65,7 @@ any open state -> cancelled
    npx wrangler secret put WEBHOOK_SECRET    # random letters and digits
    npx wrangler secret put PASSPORT_KEY      # openssl rand -base64 32
    ```
-4. `GEMINI_MODEL` is `gemini-3.8-flash` (12 s limit), then `GEMINI_FALLBACK_MODEL` (`gemini-3.5-flash,gemini-3.5-flash-lite`, 8 s each) on 429/5xx or timeout. The key is on the free tier for now.
+4. `GEMINI_MODEL` is `gemini-3.8-flash`, always (user's choice; no cheaper fallback). On 429/5xx or a timeout (15 s) it retries the same model once (12 s). The key is on the billed tier.
 5. `npx wrangler deploy`
 6. Open `https://trip-bot.<subdomain>.workers.dev/setup?key=<WEBHOOK_SECRET>`. This sets the webhook and the bot's command list.
 7. Done: `OWNER_ID` and `ADMIN_ID` are `606554606` (taken from the `OWNER_ID` environment variable).

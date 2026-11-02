@@ -16,13 +16,13 @@ export async function gemini(env, { prompt, media = [], schema = null, temperatu
   catch { throw new Error('Gemini returned invalid JSON: ' + text.slice(0, 300)); }
 }
 
-// Gemini models get overloaded (503) or slow. Try the main model with a time limit, then each fallback once.
+// Gemini models get overloaded (503) or slow. Try the model with a time limit, then retry it once.
 // Both together stay under the ~30 s a Worker gets for background work after answering Telegram.
 const RETRYABLE = new Set([429, 500, 502, 503, 504]);
 async function callWithFallback(env, body) {
-  // Main model, then each fallback in order (comma-separated GEMINI_FALLBACK_MODEL).
-  const fallbacks = (env.GEMINI_FALLBACK_MODEL || 'gemini-3.5-flash,gemini-3.5-flash-lite').split(',').map((m) => m.trim()).filter(Boolean);
-  const tries = [[env.GEMINI_MODEL || 'gemini-3.8-flash', 12000], ...fallbacks.map((m) => [m, 8000])];
+  // One retry of the same model on 429/5xx or timeout.
+  const model = env.GEMINI_MODEL || 'gemini-3.8-flash';
+  const tries = [[model, 15000], [model, 12000]];
   let last;
   for (const [model, ms] of tries) {
     let r;

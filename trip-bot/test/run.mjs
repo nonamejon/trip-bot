@@ -22,7 +22,7 @@ class Stmt {
 const env = {
   DB: { prepare: (s) => new Stmt(s) },
   OWNER_ID: '111', ADMIN_ID: '111', AGENT_MODE: 'mock', MOCK_MIRROR: 'true', MOCK_DELAY_MIN: '2',
-  GEMINI_MODEL: 'gemini-3.8-flash', GEMINI_FALLBACK_MODEL: 'gemini-3.5-flash,gemini-3.5-flash-lite', AGENT_SLA_MIN: '240', NUDGE_MIN: '120', TZ_OFFSET_MIN: '300',
+  GEMINI_MODEL: 'gemini-3.8-flash', AGENT_SLA_MIN: '240', NUDGE_MIN: '120', TZ_OFFSET_MIN: '300',
   TELEGRAM_TOKEN: 'TOKEN', GEMINI_API_KEY: 'KEY', WEBHOOK_SECRET: 'sec',
   PASSPORT_KEY: Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString('base64'),
 };
@@ -173,7 +173,7 @@ assert(status().status === 'done', 'trip closed as done');
 failNextGemini = true;
 await say('Istanbul again please, same as before'); show('second trip');
 const t2 = status().id;
-assert(geminiCalls.includes('503') && status().status === 'draft', 'main model 503 -> fallback model used');
+assert(geminiCalls.includes('503') && status().status === 'draft', 'Gemini 503 -> retried and succeeded');
 await tap(`ap:${t2}`);
 await say('/jobs');
 sqlite.prepare('UPDATE jobs SET done_at = 1 WHERE done_at IS NULL').run(); // agent goes silent
