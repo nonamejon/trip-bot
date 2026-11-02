@@ -18,13 +18,14 @@ const STYLE = {
 const style = (lang) => STYLE[lang] || STYLE.uz;
 
 // thinking: 'low' for quick routing steps (Gemini 3 thinking level); omitted = model default.
-export async function gemini(env, { prompt, media = [], schema = null, temperature = 0.2, thinking = null }) {
+// timeoutMs: how long one call may take. Writing tasks (letters, offers) can take 10-25 s on Gemini 3.8 Flash.
+export async function gemini(env, { prompt, media = [], schema = null, temperature = 0.2, thinking = null, timeoutMs = 25000 }) {
   const parts = [{ text: prompt }, ...media.map((m) => ({ inline_data: { mime_type: m.mime, data: m.b64 } }))];
   const generationConfig = { temperature };
   if (schema) { generationConfig.responseMimeType = 'application/json'; generationConfig.responseSchema = schema; }
   if (thinking) generationConfig.thinkingConfig = { thinkingLevel: thinking };
   const body = JSON.stringify({ contents: [{ role: 'user', parts }], generationConfig });
-  const r = await callWithFallback(env, body);
+  const r = await callGemini(env, body, timeoutMs);
   const j = await r.json();
   const text = (j.candidates?.[0]?.content?.parts || []).map((p) => p.text || '').join('').trim();
   if (!text) throw new Error('Gemini returned no text: ' + JSON.stringify(j).slice(0, 300));
@@ -33,30 +34,31 @@ export async function gemini(env, { prompt, media = [], schema = null, temperatu
   catch { throw new Error('Gemini returned invalid JSON: ' + text.slice(0, 300)); }
 }
 
-// Gemini models get overloaded (503) or slow. Try the model with a time limit, then retry it once.
-// Both together stay under the ~30 s a Worker gets for background work after answering Telegram.
+// Gemini sometimes answers "busy" (429/5xx) at once, or is slow. A quick "busy" is retried once, after a short pause;
+// a slow call is not retried (a second slow call would only add delay). Always model GEMINI_MODEL.
 const RETRYABLE = new Set([429, 500, 502, 503, 504]);
-async function callWithFallback(env, body) {
-  // One retry of the same model on 429/5xx or timeout.
+async function callGemini(env, body, timeoutMs) {
   const model = env.GEMINI_MODEL || 'gemini-3.8-flash';
-  const tries = [[model, 15000], [model, 12000]];
+  const started = Date.now();
   let last;
-  for (const [model, ms] of tries) {
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const left = timeoutMs - (Date.now() - started);
+    if (left < 3000) break;
     let r;
     try {
       r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
         method: 'POST',
         headers: { 'content-type': 'application/json', 'x-goog-api-key': env.GEMINI_API_KEY },
         body,
-        signal: AbortSignal.timeout(ms),
+        signal: AbortSignal.timeout(left),
       });
     } catch (e) {
-      last = new Error(`Gemini ${model} ${e.name === 'TimeoutError' ? 'timed out' : 'failed'}: ${e.message}`);
-      continue;
+      throw new Error(`Gemini ${model} ${e.name === 'TimeoutError' ? `timed out after ${Math.round((Date.now() - started) / 1000)} s` : 'failed: ' + e.message}`);
     }
     if (r.ok) return r;
     last = new Error(`Gemini ${model} HTTP ${r.status}: ${(await r.text()).slice(0, 300)}`);
     if (!RETRYABLE.has(r.status)) break;
+    await new Promise((res) => setTimeout(res, 1000));
   }
   throw last;
 }
@@ -121,7 +123,7 @@ Everything the agent has written for this request so far (later messages may add
 ${media.length ? 'The agent also attached the file(s) included here; read them.' : ''}
 
 Return JSON:
-offers: every option the agent gave, in order, each with label (${S.labels}), airline, outbound (short, like "07:40 → 10:55"), outbound_datetime ("YYYY-MM-DDTHH:MM", local departure time), return (short, with date and time, like ${S.ret}), stops (${S.stops}), hotel (name and stars), distance (to where he needs to be), total_price (number), currency, refund ("full", "penalty", "none" or "unknown"), refund_note.
+offers: every option the agent gave, in order, each with label (${S.labels}), airline, outbound (short, like "07:40 → 10:55"), outbound_datetime ("YYYY-MM-DDTHH:MM", local departure time), return (short, with date and time, like ${S.ret}), stops (${S.stops}), hotel (name and stars), distance (to where he needs to be), total_price (number), currency (ISO code, like "USD"), refund ("full", "penalty", "none" or "unknown"), refund_note.
 recommended: index (0-based) of the best fit for the request: his wishes on flight time and hotel location first, then flexibility, then price.
 reason: one short sentence saying why.
 Write all free-text values in ${S.name}; keep airline names, flight numbers and hotel names as they are.
@@ -201,7 +203,7 @@ agenda: ag_from and ag_to "YYYY-MM-DD" (today if he does not say).
 Resolve relative dates and times from now, in Tashkent time.
 question: if an event or reminder has no date or time you can work out, one short question in ${L} asking only for that; else null.
 reply: for chat, a short answer in ${L}; else null.`;
-  return gemini(env, { prompt, media, schema: ROUTE_SCHEMA, thinking: 'low' });
+  return gemini(env, { prompt, media, schema: ROUTE_SCHEMA, thinking: 'low', timeoutMs: 20000 });
 }
 
 // ---------- 5. Translation ----------
@@ -248,5 +250,5 @@ export function parseWhen(env, text) {
   const prompt = `${nowLine(env)}
 Read the date and time in this message (Tashkent time; resolve relative dates from now): """${text}"""
 Return JSON: date "YYYY-MM-DD" or null, time "HH:MM" or null.`;
-  return gemini(env, { prompt, schema: { type: 'OBJECT', properties: { date: S(), time: S() } }, thinking: 'low' });
+  return gemini(env, { prompt, schema: { type: 'OBJECT', properties: { date: S(), time: S() } }, thinking: 'low', timeoutMs: 15000 });
 }

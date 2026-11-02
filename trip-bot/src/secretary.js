@@ -5,7 +5,7 @@ import {
   MIN, HOUR, DAY, one, all, run, logEvent, esc, fmtLocal, hmLocal, localToUtc, localISODate, tz,
   setMode, strings, dayStart, addDaysISO, dayLabel, getTrip,
 } from './util.js';
-import { send, sendLong, kb, tgUpload, typing } from './telegram.js';
+import { send, sendLong, kb, tgUpload, whileTyping } from './telegram.js';
 import { translate, writeLetter, reviseLetter } from './gemini.js';
 import { eventIcs, feedIcs } from './files.js';
 import { reportError } from './flow.js';
@@ -145,9 +145,8 @@ export async function listReminders(env, uid, chat, L, lang) {
 
 export async function doTranslate(env, chat, L, lang, text, media, target) {
   if (!text && !media.length) return send(env, chat, L.nothingToTranslate);
-  await typing(env, chat);
   let r;
-  try { r = await translate(env, text, media, target, lang); }
+  try { r = await whileTyping(env, chat, () => translate(env, text, media, target, lang)); }
   catch (e) { await reportError(env, e, 'translate'); return send(env, chat, L.readFail); }
   const src = String(r.source_lang || '?').toUpperCase(), tgt = String(r.target_lang || target || '?').toUpperCase();
   await logEvent(env, 'owner', 'translate', null, `${src}->${tgt}`);
@@ -168,9 +167,9 @@ async function saveLetter(env, uid, request, r) {
 }
 
 export async function doLetter(env, uid, chat, L, lang, request) {
-  await typing(env, chat);
+  await send(env, chat, L.writing);
   let r;
-  try { r = await writeLetter(env, request, lang); }
+  try { r = await whileTyping(env, chat, () => writeLetter(env, request, lang)); }
   catch (e) { await reportError(env, e, 'writeLetter'); return send(env, chat, L.readFail); }
   await logEvent(env, 'owner', 'letter', null, request.slice(0, 80));
   return showLetter(env, chat, L, await saveLetter(env, uid, request, r));
@@ -179,9 +178,9 @@ export async function doLetter(env, uid, chat, L, lang, request) {
 export async function doRevise(env, uid, chat, L, letterId, instruction) {
   const l = await one(env, 'SELECT * FROM letters WHERE id = ? AND owner_id = ?', letterId, uid);
   if (!l) return send(env, chat, L.letterGone);
-  await typing(env, chat);
+  await send(env, chat, L.writing);
   let r;
-  try { r = await reviseLetter(env, l, instruction); }
+  try { r = await whileTyping(env, chat, () => reviseLetter(env, l, instruction)); }
   catch (e) { await reportError(env, e, 'reviseLetter'); return send(env, chat, L.readFail); }
   await logEvent(env, 'owner', 'letter_revise', null, instruction.slice(0, 80));
   return showLetter(env, chat, L, await saveLetter(env, uid, `${l.request || ''}\n[revision] ${instruction}`, r));

@@ -4,7 +4,8 @@
   "type": "module",
   "scripts": {
     "deploy": "wrangler deploy",
-    "test": "node test/run.mjs"
+    "test": "node test/run.mjs",
+    "test:live": "node test/live.mjs"
   },
   "devDependencies": {
     "better-sqlite3": "^11.0.0",

@@ -12,7 +12,7 @@ import {
   fmtLocal, hmLocal, dshort, localToUtc, localISODate, addDaysISO, nights, esc, money, refundWord, b64, encrypt, decrypt,
   getLang, setLang, strings, getMode, setMode, clearMode,
 } from './util.js';
-import { tg, tgUpload, send, typing, kb, replyKb, download } from './telegram.js';
+import { tg, tgUpload, send, typing, whileTyping, kb, replyKb, download } from './telegram.js';
 import { parseRequest, parseOffers, transcribe, routeMessage, parseWhen } from './gemini.js';
 import { toAgent, openAgentThread, mirror, isMock } from './agent.js';
 import { tripIcs } from './files.js';
@@ -178,9 +178,8 @@ export async function handleOwnerMessage(env, msg) {
 
   // Otherwise Gemini decides what the message is for.
   const t = await activeTrip(env, uid);
-  await typing(env, chat);
   let r;
-  try { r = await routeMessage(env, text, media, { lang, trip: t && { code: t.code, status: t.status, destination: t.fields.destination }, pending: mode?.arg || null }); }
+  try { r = await whileTyping(env, chat, () => routeMessage(env, text, media, { lang, trip: t && { code: t.code, status: t.status, destination: t.fields.destination }, pending: mode?.arg || null })); }
   catch (e) { await reportError(env, e, 'routeMessage'); return send(env, chat, L.readFail); }
   if (mode) await clearMode(env, uid);
   const said = text || r.transcript || '';
@@ -327,9 +326,8 @@ function offersMessage(env, t, L, lang) {
 // heardText: transcript of a voice note, when the router already made one.
 async function buildRequest(env, uid, chat, t, text, media, L, lang, heardText = null) {
   if (!t) t = await createTrip(env, uid);
-  await typing(env, chat);
   let r;
-  try { r = await parseRequest(env, t.fields, text, media, lang); }
+  try { r = await whileTyping(env, chat, () => parseRequest(env, t.fields, text, media, lang)); }
   catch (e) { await reportError(env, e, 'parseRequest'); return send(env, chat, L.readFail); }
 
   for (const k of FIELD_KEYS) if (r[k] != null && r[k] !== '') t.fields[k] = r[k];

@@ -1,5 +1,7 @@
 # Trip bot
 
+Two sections: **✈️ Mening safarlarim** (travel agent, routes, bookings, documents) and **🗂 Shaxsiy kotib** (calendar, reminders, translations, letters). Uzbek or Russian.
+
 A Telegram assistant for Azizbek. He sends a message or voice note ("Istanbul, 12 to 15 Nov, morning flight"), approves a request card, picks one of the agent's options, and gets his tickets, a calendar file and reminders in the same chat.
 
 It runs on one Cloudflare Worker, a D1 database and the Gemini API. There is no server to rent.
@@ -68,7 +70,15 @@ Admin commands (from `ADMIN_ID`):
 
 Errors are sent to `ADMIN_ID` as they happen.
 
-`npm test` runs the whole flow locally, with Telegram and Gemini faked and SQLite standing in for D1.
+`npm test` runs every flow locally, with Telegram and Gemini faked and SQLite standing in for D1. `npm run test:live` runs a day of use against the real Gemini API (Telegram still faked) and writes a transcript.
+
+## Personal secretary
+
+- **Calendar:** "ertaga 15:00 da Hilton'da uchrashuv" adds an event with a heads-up 30 minutes before (or as asked) and warns about overlaps. 📅 Bugun / Ertaga / Hafta show the agenda, trips included. 📲 gives a link that puts everything in the phone's calendar (iPhone: subscribed calendar; Google Calendar: from URL).
+- **Reminders:** "har kuni 8 da dori ichishni eslat", "напомни через 20 минут…". Snooze +15 min / +1 h; repeating ones can be stopped.
+- **Translation:** "rus tiliga tarjima qil: …", or 🌐 Tarjima to translate every message (text, voice, photo, PDF) until leaving.
+- **Letters:** "elchixonaga viza boʻyicha xat yoz" drafts a ready-to-send letter; ✏️ to revise, 🌐 to translate.
+- **Morning brief:** at `BRIEF_HOUR` (Tashkent time) the day's plan, if there is one.
 
 ## How it fits together
 

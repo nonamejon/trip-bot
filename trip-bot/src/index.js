@@ -21,8 +21,12 @@ export default {
         return new Response('forbidden', { status: 403 });
       }
       const update = await req.json();
-      // Answer Telegram at once; do the slow work (Gemini, database) after the response.
-      ctx.waitUntil(handleUpdate(env, update).catch((e) => reportError(env, e, 'update ' + update.update_id)));
+      // Work on the update while Telegram waits, up to 25 s; if it takes longer, answer Telegram and finish in the
+      // background (waitUntil gives about 30 s more). Slow Gemini steps get ~55 s in total this way.
+      // A retried delivery of the same update is ignored (updates table).
+      const work = handleUpdate(env, update).catch((e) => reportError(env, e, 'update ' + update.update_id));
+      ctx.waitUntil(work);
+      await Promise.race([work, new Promise((res) => setTimeout(res, 25000))]);
       return new Response('ok');
     }
 

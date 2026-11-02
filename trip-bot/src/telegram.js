@@ -37,6 +37,13 @@ export const send = (env, chatId, text, extra = {}) =>
 
 export const typing = (env, chatId) => tg(env, 'sendChatAction', { chat_id: chatId, action: 'typing' }).catch(() => {});
 
+// Telegram shows "typing…" for 5 s. Run fn while keeping it on, for slow steps (letters, translations, parsing).
+export async function whileTyping(env, chatId, fn) {
+  typing(env, chatId);
+  const timer = setInterval(() => typing(env, chatId), 4500);
+  try { return await fn(); } finally { clearInterval(timer); }
+}
+
 // Inline keyboard: rows of [label, callback_data]
 export const kb = (rows) => ({ reply_markup: { inline_keyboard: rows.map((r) => r.map(([text, data]) => ({ text, callback_data: data }))) } });
 
