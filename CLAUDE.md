@@ -69,7 +69,7 @@ any open state -> cancelled
 4. `GEMINI_MODEL` is `gemini-3.8-flash`, always (user's choice; no cheaper fallback). On 429/5xx or a timeout (15 s) it retries the same model once (12 s). The key is on the billed tier.
 5. `npx wrangler deploy`
 6. Open `https://trip-bot.<subdomain>.workers.dev/setup?key=<WEBHOOK_SECRET>`. This sets the webhook and the bot's command list.
-7. Done: `OWNER_ID` and `ADMIN_ID` are `606554606` (taken from the `OWNER_ID` environment variable).
+7. Done: `OWNER_ID` is `606554606` (the `OWNER_ID` environment variable). `ADMIN_ID` is a comma-separated list: `5503792899` (the maintainer) and `606554606`.
 8. Test in mock mode:
    - Send a voice note in Uzbek and approve the card.
    - Send `/now` to make the mock agent answer immediately.

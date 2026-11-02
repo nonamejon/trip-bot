@@ -22,7 +22,7 @@ class Stmt {
 }
 const env = {
   DB: { prepare: (s) => new Stmt(s) },
-  OWNER_ID: '111', ADMIN_ID: '111', AGENT_MODE: 'mock', MOCK_MIRROR: 'true', MOCK_DELAY_MIN: '2',
+  OWNER_ID: '111', ADMIN_ID: '111,222', AGENT_MODE: 'mock', MOCK_MIRROR: 'true', MOCK_DELAY_MIN: '2',
   GEMINI_MODEL: 'gemini-3.8-flash', AGENT_SLA_MIN: '240', NUDGE_MIN: '120', TZ_OFFSET_MIN: '300',
   TELEGRAM_TOKEN: 'TOKEN', GEMINI_API_KEY: 'KEY', WEBHOOK_SECRET: 'sec',
   PASSPORT_KEY: Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString('base64'),
@@ -201,6 +201,15 @@ const pdf = new TextDecoder().decode(tinyPdf(["Yoʻlovchi: AZIZBEK", 'Toshkent �
 assert(pdf.includes("(Yo'lovchi: AZIZBEK)") && pdf.includes('(Toshkent -> Istanbul)') && !pdf.includes('?'), 'PDF keeps Uzbek letters');
 
 await say('/log 12'); show('admin /log');
+
+// a second admin who is not the owner
+const admin2 = (text) => update({ message: { message_id: ++msgId, from: { id: 222, is_bot: false }, chat: { id: 222, type: 'private' }, text } });
+let n = sent.length;
+await admin2('/trips'); show('second admin /trips');
+assert(sent.slice(n).some((x) => x.p.chat_id === 222 && /T-0003 · cancelled/.test(x.p.text)), 'second admin can use admin commands');
+n = sent.length;
+await admin2('hello'); show('second admin plain message');
+assert(sent.slice(n).some((x) => x.p.chat_id === 222 && x.p.text.includes('admin only')), 'second admin is not treated as the owner');
 
 console.log('\nGemini calls:', geminiCalls.join(', '));
 Date.now = realNow;

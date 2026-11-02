@@ -25,13 +25,15 @@ const STATUS = /(?<!\p{L})(status|holat|статус|qayerda|где|where)(?!\p{
 const MAX_MEDIA = 15 * 1024 * 1024;
 
 const isOwner = (env, id) => String(id) === String(env.OWNER_ID);
-const isAdmin = (env, id) => String(id) === String(env.ADMIN_ID);
+// ADMIN_ID may list several people, comma-separated.
+export const adminIds = (env) => String(env.ADMIN_ID || '').split(',').map((s) => s.trim()).filter(Boolean);
+const isAdmin = (env, id) => adminIds(env).includes(String(id));
 
 export async function reportError(env, e, where) {
   console.error(where, e);
   try {
     await logEvent(env, 'bot', 'error', null, `${where}: ${e?.message || e}`);
-    if (env.ADMIN_ID) await send(env, env.ADMIN_ID, `<b>Bot error</b> in ${esc(where)}:\n<code>${esc(String(e?.message || e)).slice(0, 900)}</code>`);
+    for (const a of adminIds(env)) await send(env, a, `<b>Bot error</b> in ${esc(where)}:\n<code>${esc(String(e?.message || e)).slice(0, 900)}</code>`).catch(() => {});
   } catch { /* nothing else to do */ }
 }
 

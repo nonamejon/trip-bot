@@ -6,7 +6,7 @@
 import { run, esc } from './util.js';
 import { COMMANDS, STRANGER, AL } from './i18n.js';
 import { tg, send } from './telegram.js';
-import { handleOwnerMessage, handleCallback, handleAgentMessage, runChecks, reportError } from './flow.js';
+import { handleOwnerMessage, handleCallback, handleAgentMessage, runChecks, reportError, adminIds } from './flow.js';
 import { runJobs } from './mock.js';
 import { isMock } from './agent.js';
 
@@ -59,7 +59,7 @@ async function handleUpdate(env, update) {
   if (!msg || !msg.from || msg.from.is_bot) return;
 
   if (msg.chat.type === 'private') {
-    const known = [env.OWNER_ID, env.ADMIN_ID].filter(Boolean).map(String);
+    const known = [env.OWNER_ID, ...adminIds(env)].filter(Boolean).map(String);
     if (!known.includes(String(msg.from.id))) {
       return send(env, msg.chat.id, STRANGER(esc(msg.from.id)));
     }
