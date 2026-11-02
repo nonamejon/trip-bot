@@ -14,7 +14,7 @@ database_id = "a6b9448f-7127-4913-9ea5-bc786dddc799"
 [vars]
 # Telegram user id of the person the bot works for (Azizbek, or you while testing).
 # Message the bot once without it set: it replies with your id.
-OWNER_ID = "606554606"
+OWNER_ID = "5503792899"
 # Telegram user ids that get error alerts and admin commands, comma-separated. Can include OWNER_ID.
 ADMIN_ID = "5503792899,606554606"
 
