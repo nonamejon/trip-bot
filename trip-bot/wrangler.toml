@@ -14,9 +14,9 @@ database_id = "a6b9448f-7127-4913-9ea5-bc786dddc799"
 [vars]
 # Telegram user id of the person the bot works for (Azizbek, or you while testing).
 # Message the bot once without it set: it replies with your id.
-OWNER_ID = "5503792899"
+OWNER_ID = "606554606"
 # Telegram user id that gets error alerts and admin commands. Can be the same as OWNER_ID.
-ADMIN_ID = "5503792899"
+ADMIN_ID = "606554606"
 
 # "mock" = a fake travel agent answers automatically (for testing alone).
 # "group" = a real Telegram group; set AGENT_CHAT_ID and add the bot to that group.
