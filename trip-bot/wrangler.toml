@@ -25,6 +25,9 @@ ALERT_ID = "5503792899"
 #   "group"  = a real travel agent in a Telegram group; set AGENT_CHAT_ID and add the bot to that group.
 #   "mock"   = a fake travel agent answers automatically (for testing the agent flow alone).
 AGENT_MODE = "search"
+# Aviasales affiliate marker (Travelpayouts Partner ID): added to every Aviasales link so bookings earn commission.
+# Real Aviasales fares need the TRAVELPAYOUTS_TOKEN secret (npx wrangler secret put TRAVELPAYOUTS_TOKEN).
+TRAVELPAYOUTS_MARKER = "800005"
 AGENT_CHAT_ID = ""
 # "true" if the agent group has Topics turned on and the bot is an admin there: one topic per trip.
 AGENT_TOPICS = "false"

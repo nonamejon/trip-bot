@@ -109,7 +109,7 @@ function draftText(L, lang, t) {
 function compareText(env, L, lang, t) {
   const out = [`<b>${L.nOptions(t.offers.length)} · ${esc(t.fields.destination)}</b> · ${t.code}`];
   t.offers.forEach((o, i) => {
-    out.push('', `<b>${esc(o.label)}</b> · ${esc(money(o, lang))}${i === t.recommended ? ` · <u>${L.recommended}</u>` : ''}`,
+    out.push('', `<b>${esc(o.label)}</b> · ${esc(money(o, lang))}${priceSplit(L, o)}${i === t.recommended ? ` · <u>${L.recommended}</u>` : ''}`,
       `${L.flight}: ${esc([o.airline, o.outbound, o.stops].filter(Boolean).join(' · ') || L.notStated)}`,
       o.return ? `${L.back}: ${esc(o.return)}` : null,
       `${L.hotel}: ${esc([o.hotel, o.distance].filter(Boolean).join(' · ') || L.notStated)}`,
@@ -121,6 +121,10 @@ function compareText(env, L, lang, t) {
   if (t.offers.some((o) => o.flight_link || o.date_out)) out.push('', `<i>${t.fields.price_source === 'aviasales' ? L.pricesAviasales : L.pricesApprox}</i>`);
   return out.filter((x) => x !== null).join('\n');
 }
+
+// "(✈️ 378 + 🏨 85/kecha)": the flight alone matches the Aviasales link; the total also has the hotel.
+const priceSplit = (L, o) => (o.flight_price != null && o.flight_price !== o.total_price
+  ? ` (✈️ ${Math.round(o.flight_price)}${o.hotel_price_night != null ? ` + 🏨 ${Math.round(o.hotel_price_night)}${L.perNight}` : ''})` : '');
 
 // Booking links of an option: Aviasales (that fare, or a search for its dates), the airline's page, the hotel, Booking.com.
 function optionLinks(env, L, t, o) {

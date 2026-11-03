@@ -99,7 +99,7 @@ globalThis.fetch = async (url, init = {}) => {
         { label: 'Option 3', airline: 'Pegasus', outbound: '06:10 → 13:40', outbound_datetime: '2026-11-12T06:10', return: '15 Nov 18:00', stops: '1 stop via Ankara', hotel: 'Levent Residence 4*', distance: '10 min walk', total_price: 890, currency: 'USD', refund: 'none', refund_note: null },
       ];
       if (prompt.includes('SEARCHRESULT')) {
-        o[0] = { ...o[0], flight_link: 'https://www.uzairways.com/en', hotel_link: 'https://www.grandlevent.example/book', date_out: '2026-12-12', date_back: '2026-12-15', baggage: '23 kg' };
+        o[0] = { ...o[0], flight_price: 412, hotel_price_night: 346, flight_link: 'https://www.uzairways.com/en', hotel_link: 'https://www.grandlevent.example/book', date_out: '2026-12-12', date_back: '2026-12-15', baggage: '23 kg' };
         o[1] = { ...o[1], date_out: '2026-12-12', date_back: '2026-12-15' };
       }
       out = { offers: o, recommended: 0, reason: 'Morning direct flight, hotel next to the meeting, and fully refundable.', origin_en: 'Tashkent', destination_en: 'Istanbul', area_en: 'Levent, Istanbul' };
@@ -111,10 +111,11 @@ globalThis.fetch = async (url, init = {}) => {
   }
   if (url.startsWith('https://api.travelpayouts.com/aviasales/v3/prices_for_dates')) {
     lastFaresQuery = new URL(url).searchParams;
+    const dep = lastFaresQuery.get('departure_at'); // like the real API: an exact date only matches that day
     return new Response(JSON.stringify({ success: true, data: [
       { origin: 'TAS', destination: 'IST', price: 412, airline: 'HY', flight_number: '271', departure_at: '2026-11-12T07:40:00+05:00', return_at: '2026-11-15T12:30:00+03:00', transfers: 0, return_transfers: 0, duration_to: 320, link: '/search/TAS1211IST15111?t=HY1' },
       { origin: 'TAS', destination: 'IST', price: 380, airline: 'C6', flight_number: '301', departure_at: '2026-11-25T05:05:00+05:00', return_at: '2026-11-28T10:00:00+03:00', transfers: 0, return_transfers: 0, duration_to: 335, link: '/search/TAS2511IST28111?t=C61' },
-    ] }));
+    ].filter((d) => dep.length === 7 || d.departure_at.startsWith(dep)) }));
   }
   if (url.startsWith('https://api.telegram.org/file/')) return new Response(new Uint8Array([79, 103, 103, 83, 0, 1, 2, 3]));
   if (url.startsWith('https://api.telegram.org/bot')) {
@@ -450,6 +451,7 @@ assert(geminiCalls.includes('search+google') && status().status === 'offers', 's
 assert(lastText().includes('aviasales.uz/search/TAS1212IST15121?marker=12345') && lastText().includes('uzairways.com') && lastText().includes('booking.com') && !lastText().includes('google.com'), 'options link to Aviasales (with the affiliate marker), the airline, the hotel and Booking.com');
 assert(lastSearchPrompt.includes('Real fares found on Aviasales') && lastSearchPrompt.includes('"price":412') && lastFaresQuery.get('origin') === 'TAS' && lastFaresQuery.get('destination') === 'IST' && lastFaresQuery.get('return_at') === '2026-11-15', 'with a Travelpayouts token the search is built from real Aviasales fares');
 assert(lastText().includes('Aviasales’dan'), 'the card says the prices come from Aviasales');
+assert(lastText().includes('1 450 USD (✈️ 412 + 🏨 346/kecha)'), 'the total is split into the flight (as on Aviasales) and the hotel per night');
 delete env.TRAVELPAYOUTS_TOKEN; delete env.TRAVELPAYOUTS_MARKER;
 assert(!sent.slice(-6).some((x) => (x.p.text || '').includes('Bot → agent')), 'nothing is mirrored to an agent');
 assert(lastText().includes('ss=Levent%2C+Istanbul'), 'hotel search uses the area he wants, in English');
@@ -507,6 +509,8 @@ assert(aviasalesUrl({}, { destination_iata: 'DXB', date_from: '2026-12-01', one_
 const flexFares = await fetchFares({ TRAVELPAYOUTS_TOKEN: 't' }, { origin_iata: 'TAS', destination_iata: 'IST', date_flex: 'noyabr oʻrtalari', window_from: '2026-11-10', window_to: '2026-11-20' });
 assert(lastFaresQuery.get('departure_at') === '2026-11' && flexFares.length === 1 && flexFares[0].price === 412 && flexFares[0].link === 'https://www.aviasales.uz/search/TAS1211IST15111?t=HY1', 'flexible dates: month search, kept to his window');
 assert((await fetchFares({}, { destination_iata: 'IST', date_from: '2026-11-12' })).length === 0, 'no token: no fare lookup');
+const nearFares = await fetchFares({ TRAVELPAYOUTS_TOKEN: 't' }, { origin_iata: 'TAS', destination_iata: 'IST', date_from: '2026-11-13', date_to: '2026-11-16' });
+assert(nearFares.length === 1 && nearFares[0].depart === '2026-11-12T07:40', 'exact dates: fares for those dates or the closest ones (±3 days)');
 
 // error alerts: passing glitches are only logged; repeated ones give one warning; real errors alert at once
 const { reportError } = await import('../src/flow.js');

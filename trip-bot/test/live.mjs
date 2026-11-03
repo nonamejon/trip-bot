@@ -28,7 +28,7 @@ const env = {
   DB: { prepare: (s) => new Stmt(s) },
   OWNER_ID: '111', ADMIN_ID: '111', AGENT_MODE: 'mock', AGENT_LANG: 'uz', MOCK_MIRROR: 'true', MOCK_DELAY_MIN: '2',
   GEMINI_MODEL: 'gemini-3.8-flash', AGENT_SLA_MIN: '240', NUDGE_MIN: '120', TZ_OFFSET_MIN: '300', BRIEF_HOUR: '8',
-  TELEGRAM_TOKEN: 'TOKEN', GEMINI_API_KEY: process.env.GEMINI_API_KEY, WEBHOOK_SECRET: 'sec', PUBLIC_URL: 'https://bot.example',
+  TELEGRAM_TOKEN: 'TOKEN', GEMINI_API_KEY: process.env.GEMINI_API_KEY, TRAVELPAYOUTS_TOKEN: process.env.TRAVELPAYOUTS_TOKEN, TRAVELPAYOUTS_MARKER: process.env.TRAVELPAYOUTS_MARKER, WEBHOOK_SECRET: 'sec', PUBLIC_URL: 'https://bot.example',
   PASSPORT_KEY: Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString('base64'),
 };
 
@@ -42,6 +42,7 @@ globalThis.fetch = async (url, init = {}) => {
   if (url.includes('generativelanguage.googleapis.com')) {
     const t = Date.now(); const r = await realFetch(url, init); geminiMs += Date.now() - t; geminiCalls++; return r;
   }
+  if (url.startsWith('https://api.travelpayouts.com/')) return realFetch(url, init); // real Aviasales fares
   if (url.startsWith('https://api.telegram.org/file/')) return new Response(files[url.split('/').pop()]);
   const method = url.split('/').pop();
   const p = init.body instanceof FormData

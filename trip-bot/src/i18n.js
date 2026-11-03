@@ -472,3 +472,6 @@ O.uz.sorryError = 'Kechirasiz, xabaringizni qayta ishlashda xatolik boʻldi. Ilt
 O.ru.sorryError = 'Извините, при обработке сообщения произошла ошибка. Пожалуйста, отправьте его ещё раз.';
 O.uz.sorryLost = 'Kechirasiz, oxirgi xabaringizga javob bera olmadim (juda uzoq davom etdi). Iltimos, yana bir bor yuboring.';
 O.ru.sorryLost = 'Извините, не успел ответить на ваше последнее сообщение (обработка заняла слишком долго). Пожалуйста, отправьте его ещё раз.';
+
+O.uz.perNight = '/kecha';
+O.ru.perNight = '/ночь';

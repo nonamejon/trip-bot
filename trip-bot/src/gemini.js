@@ -117,6 +117,7 @@ const OFFERS_SCHEMA = {
         properties: {
           label: { type: 'STRING' }, airline: S(), outbound: S(), outbound_datetime: S(), return: S(), stops: S(), baggage: S(),
           date_out: S(), date_back: S(), flight_link: S(), hotel_link: S(),
+          flight_price: { type: 'NUMBER', nullable: true }, hotel_price_night: { type: 'NUMBER', nullable: true },
           hotel: S(), distance: S(), total_price: { type: 'NUMBER', nullable: true }, currency: S(),
           refund: { type: 'STRING', enum: ['full', 'penalty', 'none', 'unknown'] }, refund_note: S(),
         },
@@ -140,7 +141,7 @@ Everything the agent has written for this request so far (later messages may add
 ${media.length ? 'The agent also attached the file(s) included here; read them.' : ''}
 
 Return JSON:
-offers: every option the agent gave, in order, each with label (${S.labels}), airline, outbound (short, like "07:40 → 10:55"), outbound_datetime ("YYYY-MM-DDTHH:MM", local departure time), return (short, with date and time, like ${S.ret}), stops (${S.stops}), baggage (the fare's allowance, short, like "23 kg" or "hand luggage only"), hotel (name and stars), distance (to where he needs to be), total_price (number), currency (ISO code, like "USD"), refund ("full", "penalty", "none" or "unknown"), refund_note, date_out and date_back ("YYYY-MM-DD" of the outbound and return flights; date_back null if one-way), flight_link and hotel_link (http(s) URLs given in the text for booking that flight and that hotel; null if none).
+offers: every option the agent gave, in order, each with label (${S.labels}), airline, outbound (short, like "07:40 → 10:55"), outbound_datetime ("YYYY-MM-DDTHH:MM", local departure time), return (short, with date and time, like ${S.ret}), stops (${S.stops}), baggage (the fare's allowance, short, like "23 kg" or "hand luggage only"), hotel (name and stars), distance (to where he needs to be), total_price (number, everything together), flight_price (the flights alone, if given), hotel_price_night (the hotel per night, if given), currency (ISO code, like "USD"), refund ("full", "penalty", "none" or "unknown"), refund_note, date_out and date_back ("YYYY-MM-DD" of the outbound and return flights; date_back null if one-way), flight_link and hotel_link (http(s) URLs given in the text for booking that flight and that hotel; null if none).
 origin_en, destination_en: the origin and destination cities in English; area_en: the area where he wants to stay, in English (e.g. "Levent, Istanbul"), or the destination city.
 recommended: index (0-based) of the best fit for the request: his wishes on flight time and hotel location first, then flexibility, then price.
 reason: one short sentence saying why.
