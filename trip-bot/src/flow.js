@@ -41,10 +41,11 @@ const MAX_MEDIA = 15 * 1024 * 1024;
 const isOwner = isUser; // every user (owner or admin) has their own assistant
 // ADMIN_ID may list several people, comma-separated.
 export { adminIds };
-const isAdmin = (env, id) => adminIds(env).includes(String(id));
+// Maintenance commands and error alerts are the owner's (the maintainer); admins only use the assistant.
+const isMaintainer = (env, id) => String(id) === String(env.OWNER_ID);
 
 // Who gets error alerts: ALERT_ID (comma-separated), or every admin if it is not set.
-const alertIds = (env) => (env.ALERT_ID ? String(env.ALERT_ID).split(',').map((s) => s.trim()).filter(Boolean) : adminIds(env));
+const alertIds = (env) => (env.ALERT_ID ? String(env.ALERT_ID).split(',').map((s) => s.trim()).filter(Boolean) : [String(env.OWNER_ID || '')].filter(Boolean));
 
 // Passing glitches: a D1 network blip, Gemini busy or slow. The cron retries next minute and the owner already got
 // a polite "try again", so these are only logged; an alert goes out if they keep happening (3+ in 15 min, once an hour).
@@ -462,7 +463,7 @@ async function ownerCommand(env, msg, text) {
   const arg = rest.join(' ').trim();
   const c = cmd.toLowerCase().replace(/@.*$/, '');
 
-  if (isAdmin(env, uid) && ADMIN[c]) return ADMIN[c](env, chat, arg);
+  if (isMaintainer(env, uid) && ADMIN[c]) return ADMIN[c](env, chat, arg);
   if (!isOwner(env, uid)) return;
   await logChat(env, uid, 'in', c === '/passport' ? '/passport (hidden)' : text);
 

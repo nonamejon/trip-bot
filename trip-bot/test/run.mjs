@@ -25,7 +25,7 @@ class Stmt {
 }
 const env = {
   DB: { prepare: (s) => new Stmt(s) },
-  OWNER_ID: '111', ADMIN_ID: '111,222', ALERT_ID: '111', AGENT_MODE: 'mock', MOCK_MIRROR: 'true', MOCK_DELAY_MIN: '2',
+  OWNER_ID: '111', ADMIN_ID: '222', AGENT_MODE: 'mock', MOCK_MIRROR: 'true', MOCK_DELAY_MIN: '2',
   GEMINI_MODEL: 'gemini-3.8-flash', AGENT_SLA_MIN: '240', NUDGE_MIN: '120', TZ_OFFSET_MIN: '300',
   TELEGRAM_TOKEN: 'TOKEN', GEMINI_API_KEY: 'KEY', WEBHOOK_SECRET: 'sec', PUBLIC_URL: 'https://bot.example', BRIEF_HOUR: '8',
   PASSPORT_KEY: Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString('base64'),
@@ -320,8 +320,8 @@ await say('/log 12'); show('admin /log');
 // a second admin who is not the owner
 const admin2 = (text) => update({ message: { message_id: ++msgId, from: { id: 222, is_bot: false }, chat: { id: 222, type: 'private' }, text } });
 let n = sent.length;
-await admin2('/alltrips'); show('second admin /alltrips');
-assert(sent.slice(n).some((x) => x.p.chat_id === 222 && /T-0003 · cancelled/.test(x.p.text)), 'admins see every trip with /alltrips');
+await say('/alltrips');
+assert(sent.slice(n).some((x) => x.p.chat_id === 111 && /T-0003 · cancelled/.test(x.p.text)), 'the owner sees every trip with /alltrips');
 n = sent.length;
 await admin2('hello'); show('second admin plain message');
 assert(sent.slice(n).some((x) => x.p.chat_id === 222 && JSON.stringify(x.p.reply_markup || '').includes('lg:uz')), 'an admin is a user too: first message asks for a language');
@@ -332,6 +332,11 @@ await admin2('/trips');
 assert(sent.slice(n).some((x) => x.p.chat_id === 222 && x.p.text === 'Поездок пока нет. Напишите, куда и когда вам нужно поехать.'), "an admin's /trips shows their own trips (none), not the owner's");
 await tapAs(222, `tv:${tripId}`);
 assert(sent.at(-1).method === 'answerCallbackQuery' && sent.at(-1).p.text === 'Эта кнопка устарела.', "an admin cannot open the owner's trip");
+for (const c of ['/alltrips', '/log', '/now', `/fire T-000${tripId}`, `/setstatus T-000${tripId} done`]) {
+  n = sent.length;
+  await admin2(c);
+  assert(sent.slice(n).filter((x) => x.p.chat_id === 222).every((x) => x.p.text === 'Не знаю такой команды. Нажмите /help.'), `an admin does not get the maintenance command ${c.split(' ')[0]}`);
+}
 
 // ---------- Personal secretary ----------
 const mode = () => sqlite.prepare('SELECT mode FROM prefs WHERE telegram_id = 111').get()?.mode ?? null;

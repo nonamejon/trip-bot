@@ -4,7 +4,7 @@ Read `CHAT_LOG.md` for the full history. This file says what exists now and what
 
 ## What this is
 
-A private Telegram assistant for Azizbek (and anyone in `ADMIN_ID`, each with their own trips, calendar, reminders and chat: `util.userIds`), in Uzbek or Russian. Two sections, on a keyboard at the bottom of the chat:
+A private Telegram assistant in Uzbek or Russian. Roles: `OWNER_ID` is the maintainer (uses the assistant, gets error alerts, has the maintenance commands); `ADMIN_ID` lists the people who use the assistant (Azizbek at handover), with no alerts or maintenance commands. Each person has their own trips, calendar, reminders and chat (`util.userIds`). Two sections, on a keyboard at the bottom of the chat:
 
 | Section | Main features |
 | --- | --- |
@@ -16,7 +16,7 @@ A private Telegram assistant for Azizbek (and anyone in `ADMIN_ID`, each with th
 - **Secretary:** free messages or voice notes like "ertaga 15:00 da Hilton'da uchrashuv", "har kuni 8 da dori ichishni eslat", "rus tiliga tarjima qil: …", "elchixonaga xat yoz". Calendar events get a heads-up (default 30 min) and an overlap warning; a subscription link (`/cal/<token>.ics`) puts events and trips in his phone's calendar. Reminders can repeat (daily, weekdays, weekly, monthly) and be snoozed. Translation works on text, voice, photos and PDFs, one-off or in a translate mode. Letters can be revised or translated. A morning brief at `BRIEF_HOUR` lists the day.
 - **Trip request intake:** from the first message the bot shows the request card with ❓ for missing items and asks for all of them in one message; the questions come from code, not from Gemini. Only "where" and "roughly when" (exact dates or `date_flex`) block a request (`hardMissing`); travelers and a missing return date are asked as optional (`softMissing`) and the approve button is shown anyway. Approximate dates are never turned into exact ones. Baggage is never asked: if he mentions it, it is passed on; otherwise the agent is asked to state each fare's allowance, which the options show. Gemini only extracts, with the recent conversation as context; impossible values (travelers outside 1-20, non-ISO dates, return before departure) are dropped. Voice notes are not echoed back. One-way trips (`one_way`) need no return date; approximate dates keep a `date_flex` note ("noyabr oʻrtalari, eng arzon kun") that the card and the agent see.
 - **Never silent:** an unexpected error sends him an apology at once (index.js `apologize`); a message whose handling was cut off (time limit) is found by the cron watchdog (`updates.done_at` still empty after 2 min) which apologizes once and alerts the maintainer. Cloudflare Workers Logs are on (`[observability]`).
-- **Errors:** alerts go to `ALERT_ID` (the maintainer), never to the owner. Passing glitches (D1 network blips, Gemini busy or slow) are only logged as `error_transient`; 3+ within 15 min give one warning per hour. Other errors alert at once.
+- **Errors:** alerts go to `OWNER_ID` (the maintainer; `ALERT_ID` can override), never to the admins (users). Passing glitches (D1 network blips, Gemini busy or slow) are only logged as `error_transient`; 3+ within 15 min give one warning per hour. Other errors alert at once.
 - **Memory:** both sides of the owner's chat are kept in `chat_log` (30 days; never the `/passport` text). The last 20 lines of the past 24 h go to `routeMessage` and `parseRequest`. Read `chat_log` (via the connector) to see what the bot actually said.
 - **Routing:** every free message goes through `routeMessage` (Gemini, low thinking) which picks the intent; buttons can set a "mode" (prefs.mode: translate, letter, revise, agent, flight_time, clarify) so the next message is used for that.
 
@@ -90,7 +90,7 @@ any open state -> cancelled
 4. `GEMINI_MODEL` is `gemini-3.8-flash`, always (user's choice; no cheaper fallback). On 429/5xx or a timeout (15 s) it retries the same model once (12 s). The key is on the billed tier.
 5. `npx wrangler deploy`
 6. Open `https://trip-bot.<subdomain>.workers.dev/setup?key=<WEBHOOK_SECRET>`. This sets the webhook and the bot's command list.
-7. Done: `OWNER_ID` is `5503792899` (the maintainer, testing; switch to Azizbek's ID at handover). It was `606554606`, which is still an admin. `ADMIN_ID` is a comma-separated list: `5503792899` (the maintainer) and `606554606`.
+7. Done: `OWNER_ID` is `5503792899` (the maintainer: alerts and maintenance commands). `ADMIN_ID` = `606554606` (a user). At handover add Azizbek's ID to `ADMIN_ID`; the owner stays the maintainer.
 8. Test in mock mode:
    - Send a voice note in Uzbek and approve the card.
    - Send `/now` to make the mock agent answer immediately.
@@ -101,7 +101,7 @@ any open state -> cancelled
 
 ## Testing
 
-- `npm test`: 119 checks
+- `npm test`: 124 checks
 - `npm run eval`: 37 real messages (several from actual use) against the real Gemini; must stay at 95%+ before deploying a prompt change. Last run: 37/37. over every flow, every message validated against Telegram's rules.
 - `SCENARIO=search npm run test:live -- <voice-dir> <report.md>`: real searches (Istanbul by voice, Guangzhou with flexible dates); last run: both found real options in ~40 s and completed.
 - `npm run test:live -- <voice-dir> <report.md>`: real Gemini 3.8 Flash on a full day of use (voice notes, PDF, Uzbek and Russian). Last run: all steps worked, slowest 19.7 s, no rule violations.
