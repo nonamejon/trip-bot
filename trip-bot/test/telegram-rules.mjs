@@ -24,6 +24,7 @@ export function checkTelegram(method, p) {
   const rm = typeof p.reply_markup === 'string' ? JSON.parse(p.reply_markup) : p.reply_markup;
   for (const b of rm?.inline_keyboard?.flat() || []) {
     if (!b.text) return 'button text is empty';
+    if (b.url) { if (!/^https?:\/\/[^\s]+$/.test(b.url) || b.url.length > 2048) return 'BUTTON_URL_INVALID ' + b.url; continue; }
     if (!b.callback_data || Buffer.byteLength(b.callback_data) > 64) return 'BUTTON_DATA_INVALID ' + b.callback_data;
   }
   for (const b of rm?.keyboard?.flat() || []) if (!b.text) return 'keyboard button text is empty';

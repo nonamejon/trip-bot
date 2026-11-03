@@ -398,3 +398,37 @@ O.uz.field.date_from = 'qachon (taxminan boʻlsa ham)';
 O.ru.field.date_from = 'когда (хотя бы примерно)';
 A.uz.flexAsk = 'Sanalar moslashuvchan: eng arzon sanalarni taklif qiling.';
 A.ru.flexAsk = 'Даты гибкие: предложите самые дешёвые даты.';
+
+// Search mode (no travel agent): the bot finds flights and hotels itself
+Object.assign(O.uz, {
+  searching: '🔎 Reyslar va mehmonxonalarni qidiryapman. Odatda 1–2 daqiqa.',
+  searchingAgain: '🔎 Boshqa variantlarni qidiryapman…',
+  searchFailed: 'Hozir variantlarni topa olmadim. Birozdan keyin qayta urinib koʻring.',
+  btnRetrySearch: '🔁 Qayta qidirish',
+  pricesApprox: 'ℹ️ Narxlar taxminiy. Aniq narx va boʻsh joylar — havolalarda.',
+  linkAirline: 'Aviakompaniya', linkHotel: 'Mehmonxona',
+  chosenSearch: (l) => `✅ Tanlandi: <b>${l}</b>.`,
+  bookHint: 'Quyidagi havolalar orqali bron qiling. Bron qilgach «Bron qildim» tugmasini bosing yoki chiptani shu yerga yuboring — eslatmalar va taqvimni qoʻyaman.',
+  btnApproveSearch: 'Tasdiqlash va qidirish',
+  btnBooked: '✅ Bron qildim', btnPickOther: '↩️ Boshqa variant tanlash', btnBookingLinks: '🔗 Bron havolalari',
+  docSaved: (code) => `📎 Hujjat saqlandi (${code}).`,
+  noAgentNote: 'Turagent ulanmagan. Bronni oʻzgartirish uchun bron qilgan saytingizdan foydalaning.',
+  stepsSearch: { sent: 'Variantlar qidirilmoqda', chosen: 'Bron qilishingiz kutilmoqda' },
+  statusWordSearch: { sent: 'qidirilmoqda', chosen: 'bron kutilmoqda' },
+});
+Object.assign(O.ru, {
+  searching: '🔎 Ищу рейсы и отели. Обычно 1–2 минуты.',
+  searchingAgain: '🔎 Ищу другие варианты…',
+  searchFailed: 'Сейчас не получилось найти варианты. Попробуйте ещё раз чуть позже.',
+  btnRetrySearch: '🔁 Искать снова',
+  pricesApprox: 'ℹ️ Цены примерные. Точная цена и наличие мест — по ссылкам.',
+  linkAirline: 'Авиакомпания', linkHotel: 'Отель',
+  chosenSearch: (l) => `✅ Выбрано: <b>${l}</b>.`,
+  bookHint: 'Забронируйте по ссылкам ниже. После брони нажмите «Я забронировал» или пришлите билет сюда — поставлю напоминания и добавлю в календарь.',
+  btnApproveSearch: 'Подтвердить и искать',
+  btnBooked: '✅ Я забронировал', btnPickOther: '↩️ Выбрать другой вариант', btnBookingLinks: '🔗 Ссылки для брони',
+  docSaved: (code) => `📎 Документ сохранён (${code}).`,
+  noAgentNote: 'Турагент не подключён. Чтобы изменить бронь, используйте сайт, где бронировали.',
+  stepsSearch: { sent: 'Ищу варианты', chosen: 'Ждёт вашей брони' },
+  statusWordSearch: { sent: 'поиск', chosen: 'ждёт брони' },
+});

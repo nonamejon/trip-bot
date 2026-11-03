@@ -31,7 +31,7 @@ const env = {
 };
 
 // ---------- fake Telegram + Gemini ----------
-let lastGeminiMime = null, lastParsePrompt = '';
+let lastGeminiMime = null, lastParsePrompt = '', lastSearchPrompt = '', failSearch = 0;
 let msgId = 100, offersRound = 0, failNextGemini = false;
 const sent = [];
 const geminiCalls = [];
@@ -47,7 +47,12 @@ globalThis.fetch = async (url, init = {}) => {
     const hasMedia = body.contents[0].parts.length > 1;
     if (hasMedia) lastGeminiMime = body.contents[0].parts[1].inline_data.mime_type;
     let out;
-    if (prompt.startsWith('You route messages')) {
+    if (prompt.startsWith('You are a travel agent in Tashkent searching')) {
+      geminiCalls.push('search' + (body.tools ? '+google' : ''));
+      lastSearchPrompt = prompt;
+      if (failSearch > 0) { failSearch--; return new Response('{"error":{"code":400,"message":"search failed"}}', { status: 400 }); }
+      out = 'SEARCHRESULT 1) Uzbekistan Airways HY271 ... https://www.uzairways.com 2) Turkish TK363 ... 3) Centrum Air C6301 ...';
+    } else if (prompt.startsWith('You route messages')) {
       geminiCalls.push('route' + (hasMedia ? '+audio' : ''));
       out = fakeRoute(prompt, hasMedia);
     } else if (prompt.startsWith('Translate for a busy executive')) {
@@ -85,7 +90,11 @@ globalThis.fetch = async (url, init = {}) => {
         { label: 'Option 2', airline: 'Turkish Airlines TK 371', outbound: '09:15 → 12:30', outbound_datetime: '2026-11-12T09:15', return: '15 Nov 21:05', stops: 'direct', hotel: 'Sisli Park 4*', distance: '15 min taxi', total_price: 1120, currency: 'USD', refund: offersRound === 1 ? 'unknown' : 'penalty', refund_note: null },
         { label: 'Option 3', airline: 'Pegasus', outbound: '06:10 → 13:40', outbound_datetime: '2026-11-12T06:10', return: '15 Nov 18:00', stops: '1 stop via Ankara', hotel: 'Levent Residence 4*', distance: '10 min walk', total_price: 890, currency: 'USD', refund: 'none', refund_note: null },
       ];
-      out = { offers: o, recommended: 0, reason: 'Morning direct flight, hotel next to the meeting, and fully refundable.' };
+      if (prompt.includes('SEARCHRESULT')) {
+        o[0] = { ...o[0], flight_link: 'https://www.uzairways.com/en', hotel_link: 'https://www.grandlevent.example/book', date_out: '2026-12-12', date_back: '2026-12-15', baggage: '23 kg' };
+        o[1] = { ...o[1], date_out: '2026-12-12', date_back: '2026-12-15' };
+      }
+      out = { offers: o, recommended: 0, reason: 'Morning direct flight, hotel next to the meeting, and fully refundable.', origin_en: 'Tashkent', destination_en: 'Istanbul', area_en: 'Levent, Istanbul' };
     } else if (prompt.startsWith('Transcribe')) {
       geminiCalls.push('transcribe'); out = { transcript: 'what is the status' };
     } else throw new Error('Unexpected Gemini prompt: ' + prompt.slice(0, 80));
@@ -124,7 +133,8 @@ function fakeRoute(prompt, hasMedia) {
   const pending = (prompt.match(/you asked him a question about it: "{3}([\s\S]*?)"{3}/) || [])[1];
   if (hasMedia && /^(audio|video)/.test(lastGeminiMime)) return { intent: 'trip', transcript: 'Istanbulga 12-noyabr ertalab uchishim kerak, 3 kunga.' };
   if (pending && /juma/.test(pending)) return { intent: 'event', ev_title: 'Uchrashuv', ev_date: localISO(4), ev_time: '10:00' };
-  if (/agentga/.test(m)) return { intent: 'trip_note' };
+  if (/agentga|arzonroq/.test(m)) return { intent: 'trip_note' };
+  if (/chiptam/.test(m)) return { intent: 'trip_docs' };
   if (/cancel|отмен/.test(m)) return { intent: 'trip_cancel' };
   if (/status/.test(m)) return { intent: 'trip_status' };
   if (/juma kuni uchrashuv/.test(m)) return { intent: 'event', ev_title: 'Uchrashuv', ev_date: localISO(4), question: 'Uchrashuv soat nechada boʻladi?' };
@@ -163,7 +173,7 @@ function show(label) {
   for (const s of sent.slice(shown)) {
     if (['answerCallbackQuery', 'editMessageReplyMarkup', 'sendChatAction', 'getFile'].includes(s.method)) continue;
     const rm = s.p.reply_markup ? (typeof s.p.reply_markup === 'string' ? JSON.parse(s.p.reply_markup) : s.p.reply_markup) : null;
-    const btns = rm ? [...(rm.inline_keyboard || []).flat().map((b) => `[${b.text} → ${b.callback_data}]`), ...(rm.keyboard || []).flat().map((b) => `⌨[${b.text}]`)].join(' ') : '';
+    const btns = rm ? [...(rm.inline_keyboard || []).flat().map((b) => `[${b.text} → ${b.callback_data || b.url}]`), ...(rm.keyboard || []).flat().map((b) => `⌨[${b.text}]`)].join(' ') : '';
     const body = s.p.text ?? s.p.caption ?? (s.p.document ? 'doc ' + s.p.document : '');
     console.log(`-> ${s.method} chat=${s.p.chat_id ?? ''}\n   ${String(body).replace(/\n/g, '\n   ')}${btns ? '\n   ' + btns : ''}`);
   }
@@ -399,6 +409,45 @@ assert(/Sanalar: [^\n❓]*moslashuvchan/.test(lastText()) && !lastText().include
 await tap(`ap:${flexTrip}`);
 assert(/eng arzon sanalarni/.test(sqlite.prepare(`SELECT detail FROM events WHERE action = 'to_agent:request' AND trip_id = ?`).get(flexTrip)?.detail || ''), 'agent is asked for the cheapest dates');
 await say('/cancel'); await tap(`cy:${flexTrip}`);
+
+// ---------- search mode: no agent, the bot finds flights and hotels itself ----------
+env.AGENT_MODE = 'search';
+await say('Istanbul again please, same as before, 23 kg'); show('search mode: request');
+const sTrip = status().id;
+await tap(`ap:${sTrip}`); show('search mode: approve');
+assert(sent.filter((x) => x.method === 'sendMessage').at(-2).p.reply_markup.inline_keyboard[0][0].text === 'Tasdiqlash va qidirish', 'search mode: the card says approve and search');
+assert(lastText().startsWith('🔎') && sqlite.prepare(`SELECT COUNT(*) c FROM jobs WHERE kind = 'search_offers' AND trip_id = ? AND done_at IS NULL`).get(sTrip).c === 1, 'approve queues a search, not a message to an agent');
+await cron(); show('cron: search');
+assert(geminiCalls.includes('search+google') && status().status === 'offers', 'search runs with Google Search and shows options (no clarification round)');
+assert(lastText().includes('google.com/travel/flights') && lastText().includes('uzairways.com') && lastText().includes('booking.com') && lastText().includes('ℹ️'), 'options link to the airline, Google Flights, the hotel and Booking.com; prices marked approximate');
+assert(!sent.slice(-6).some((x) => (x.p.text || '').includes('Bot → agent')), 'nothing is mirrored to an agent');
+assert(lastText().includes('ss=Levent%2C+Istanbul'), 'hotel search uses the area he wants, in English');
+await tap(`ch:${sTrip}:0`); show('search mode: choose');
+assert(status().status === 'chosen' && lastKb().includes('"url":"https://www.google.com/travel/flights') && lastKb().includes(`bk:${sTrip}`), 'choosing shows booking links and "I booked it"');
+n0 = sent.length;
+await tap(`bk:${sTrip}`); show('search mode: booked');
+assert(status().status === 'booked' && sent.slice(n0).some((x) => x.method === 'sendDocument' && /text\/calendar/.test(x.p.document)), '"I booked it" completes the trip with the calendar file');
+assert(JSON.parse(sqlite.prepare('SELECT fields FROM trips WHERE id = ?').get(sTrip).fields).date_from === '2026-11-12', 'dates kept');
+await tap(`tv:${sTrip}`);
+assert(lastKb().includes(`bl:${sTrip}`) && !lastKb().includes('aw:'), 'card: booking links, no "write to agent"');
+
+// a failed search is retried once, then he gets a retry button
+await say('Istanbul again please, same as before, 23 kg'); const sTrip2 = status().id;
+await tap(`ap:${sTrip2}`);
+failSearch = 2;
+await cron(); advance(2); await cron(); show('search fails twice');
+assert(lastText().includes('topa olmadim') && lastKb().includes(`sr:${sTrip2}`), 'after two failures: apology and a retry button');
+await tap(`sr:${sTrip2}`); await cron(); show('retry search');
+assert(status().status === 'offers', 'retry finds options');
+await say('arzonroq variant topib ber'); show('new wish while choosing');
+assert(lastText().startsWith('🔎') && /arzonroq/.test(sqlite.prepare('SELECT payload FROM jobs ORDER BY id DESC').get().payload), 'a new wish starts a new search with it');
+await cron();
+assert(lastSearchPrompt.includes('arzonroq'), 'the search gets his wish');
+await tap(`ch:${sTrip2}:1`);
+await update({ message: { message_id: ++msgId, from: owner, chat: { id: 111, type: 'private' }, caption: 'chiptam', document: { file_id: 'TICKET1', file_name: 'ticket.pdf', mime_type: 'application/pdf', file_size: 30000 } } });
+show('his ticket');
+assert(status().status === 'booked' && sqlite.prepare('SELECT COUNT(*) c FROM documents WHERE trip_id = ?').get(sTrip2).c === 1, 'sending the ticket saves it and completes the booking');
+env.AGENT_MODE = 'mock';
 
 // error alerts: passing glitches are only logged; repeated ones give one warning; real errors alert at once
 const { reportError } = await import('../src/flow.js');

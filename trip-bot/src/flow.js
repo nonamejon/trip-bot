@@ -14,7 +14,8 @@ import {
 } from './util.js';
 import { tg, tgUpload, send, typing, whileTyping, kb, replyKb, download } from './telegram.js';
 import { parseRequest, parseOffers, transcribe, routeMessage, parseWhen } from './gemini.js';
-import { toAgent, openAgentThread, mirror, isMock } from './agent.js';
+import { toAgent, openAgentThread, mirror, isMock, isSearch } from './agent.js';
+import { queueSearch, googleFlightsUrl, bookingComUrl, safeUrl } from './search.js';
 import { tripIcs } from './files.js';
 import { O, AL, agentLang, PICK_TEXT, PICK_BUTTONS, COMMANDS, KB_TRIPS, KB_SEC } from './i18n.js';
 import { secMenu, addEvent, addReminder, showAgenda, listReminders, doTranslate, doLetter, doRevise, handleSecCallback } from './secretary.js';
@@ -100,7 +101,7 @@ function draftText(L, lang, t) {
     `${L.hotel}: ${esc(f.hotel || L.noPref)}`,
     `${L.budget}: ${esc(f.budget || L.notSet)}`,
     f.notes ? `${L.notes}: ${esc(f.notes)}` : null, '',
-    `<i>${L.passportNote}</i>`,
+    L.passportNote ? `<i>${L.passportNote}</i>` : null,
   ].filter((x) => x !== null).join('\n');
 }
 
@@ -112,10 +113,25 @@ function compareText(L, lang, t) {
       o.return ? `${L.back}: ${esc(o.return)}` : null,
       `${L.hotel}: ${esc([o.hotel, o.distance].filter(Boolean).join(' · ') || L.notStated)}`,
       o.baggage ? `${L.baggage}: ${esc(o.baggage)}` : null,
-      `${L.cancellation}: ${esc(refundWord(o.refund, lang))}${o.refund_note ? ` (${esc(o.refund_note)})` : ''}`);
+      `${L.cancellation}: ${esc(refundWord(o.refund, lang))}${o.refund_note ? ` (${esc(o.refund_note)})` : ''}`,
+      linksLine(L, t, o));
   });
   if (t.recommended != null && t.reason && t.offers[t.recommended]) out.push('', `<i>${L.why(esc(t.offers[t.recommended].label))}: ${esc(t.reason)}</i>`);
+  if (t.offers.some((o) => o.flight_link || o.date_out)) out.push('', `<i>${L.pricesApprox}</i>`);
   return out.filter((x) => x !== null).join('\n');
+}
+
+// Booking links of an option: airline page, live Google Flights search, hotel page, Booking.com search.
+function optionLinks(L, t, o) {
+  return [
+    [L.linkAirline, safeUrl(o.flight_link)], ['Google Flights', googleFlightsUrl(t.fields, o)],
+    [L.linkHotel, safeUrl(o.hotel_link)], ['Booking.com', o.hotel ? bookingComUrl(t.fields, o) : null],
+  ].filter(([, u]) => u);
+}
+const href = (u) => u.replace(/&/g, '&amp;').replace(/"/g, '&quot;');
+function linksLine(L, t, o) {
+  const links = optionLinks(L, t, o);
+  return links.length ? '🔗 ' + links.map(([name, u]) => `<a href="${href(u)}">${esc(name)}</a>`).join(' · ') : null;
 }
 
 async function tripText(env, L, lang, t) {
@@ -133,11 +149,17 @@ async function tripText(env, L, lang, t) {
 }
 
 const STEP_ORDER = ['draft', 'sent', 'offers', 'chosen', 'booked', 'done'];
+// In search mode a few steps read differently (no agent).
+const modeL = (env, L) => (isSearch(env)
+  ? { ...L, steps: { ...L.steps, ...L.stepsSearch }, statusWord: { ...L.statusWord, ...L.statusWordSearch }, btnApprove: L.btnApproveSearch, btnApproveShort: L.btnApproveSearch, passportNote: null }
+  : L);
+
 function statusText(env, L, lang, t) {
+  L = modeL(env, L);
   const cur = STEP_ORDER.indexOf(t.status);
   const lines = STEP_ORDER.map((s, i) => (i < cur ? '✓ ' : i === cur ? '› <b>' : '· ') + L.steps[s] + (i === cur ? '</b>' : ''));
   if (t.status === 'collecting') lines.unshift(`› <b>${L.collecting}</b>`);
-  if (t.status === 'sent' && t.due_at) lines.push('', L.agentDue(fmtLocal(env, t.due_at, lang)));
+  if (t.status === 'sent' && t.due_at && !isSearch(env)) lines.push('', L.agentDue(fmtLocal(env, t.due_at, lang)));
   return `<b>${esc(t.fields.destination || L.trip)}</b> · ${t.code}\n\n` + lines.join('\n');
 }
 
@@ -237,7 +259,24 @@ export async function handleOwnerMessage(env, msg) {
     case 'trip_note': {
       const row = await one(env, `SELECT id FROM trips WHERE owner_id = ? AND status IN ('sent', 'offers', 'chosen', 'booked') ORDER BY id DESC LIMIT 1`, uid);
       if (!row) return buildRequest(env, uid, chat, t && ['collecting', 'draft'].includes(t.status) ? t : null, useText, useMedia, L, lang, isVoice ? r.transcript : null, history);
-      return noteToAgent(env, msg, await getTrip(env, row.id), chat, L, said, media);
+      const tn = await getTrip(env, row.id);
+      if (isSearch(env)) {
+        // No agent: a new wish changes the search (while choosing), otherwise there is no one to tell.
+        if (['sent', 'offers'].includes(tn.status)) return otherOptions(env, tn, said);
+        return send(env, chat, L.noAgentNote);
+      }
+      return noteToAgent(env, msg, tn, chat, L, said, media);
+    }
+    case 'trip_docs': {
+      const row = await one(env, `SELECT id FROM trips WHERE owner_id = ? AND status IN ('chosen', 'booked', 'offers', 'sent') ORDER BY id DESC LIMIT 1`, uid);
+      const file = msg.document || msg.photo?.[msg.photo.length - 1];
+      if (!row || !file) return send(env, chat, esc(r.reply || L.chatFallback), mainKb(L));
+      const td = await getTrip(env, row.id);
+      await run(env, 'INSERT INTO documents (trip_id, name, file_id, created_at) VALUES (?, ?, ?, ?)', td.id, msg.document?.file_name || 'photo.jpg', file.file_id, Date.now());
+      await logEvent(env, 'owner', 'documents', td.id, msg.document?.file_name || 'photo');
+      await send(env, chat, L.docSaved(td.code));
+      if (td.status === 'chosen') return finishBooking(env, td);
+      return;
     }
     case 'trip_status': return send(env, chat, t ? statusText(env, L, lang, t) : L.noTripTell);
     case 'trip_cancel':
@@ -334,6 +373,7 @@ async function tripsMenu(env, uid, chat, L, lang) {
 
 // One trip: route, dates, booking, documents, and what can be done with it now.
 async function tripCard(env, chat, L, lang, t) {
+  L = modeL(env, L);
   const f = t.fields, o = t.chosen != null ? t.offers[t.chosen] : null, n = nights(f.date_from, f.date_to);
   const docs = await all(env, 'SELECT id FROM documents WHERE trip_id = ?', t.id);
   const lines = [`<b>✈️ ${route(L, t)}</b> · ${t.code}`, `${L.statusLabel}: <b>${L.statusWord[t.status] || t.status}</b>`];
@@ -348,13 +388,15 @@ async function tripCard(env, chat, L, lang, t) {
     lines.push(`${L.cancellation}: ${esc(refundWord(o.refund, lang))}${o.refund_note ? ` (${esc(o.refund_note)})` : ''}`);
   }
   if (t.flight_at) lines.push(`🛫 ${fmtLocal(env, t.flight_at, lang)}`);
-  if (t.status === 'sent' && t.due_at) lines.push('', L.agentDue(fmtLocal(env, t.due_at, lang)));
+  if (t.status === 'sent' && t.due_at && !isSearch(env)) lines.push('', L.agentDue(fmtLocal(env, t.due_at, lang)));
 
   const rows = [];
   if (t.status === 'draft') rows.push([[L.btnApprove, `ap:${t.id}`]]);
   if (t.status === 'offers') rows.push([[L.btnOptions, `ov:${t.id}`]]);
   if (docs.length) rows.push([[L.btnDocs(docs.length), `td:${t.id}`]]);
-  if (WITH_AGENT.includes(t.status)) rows.push([[L.btnWriteAgent, `aw:${t.id}`]]);
+  if (WITH_AGENT.includes(t.status) && !isSearch(env)) rows.push([[L.btnWriteAgent, `aw:${t.id}`]]);
+  if (isSearch(env) && o && ['chosen', 'booked'].includes(t.status)) rows.push([[L.btnBookingLinks, `bl:${t.id}`]]);
+  if (isSearch(env) && t.status === 'chosen') rows.push([[L.btnBooked, `bk:${t.id}`]]);
   if (['booked', 'done'].includes(t.status) && o) rows.push([[L.btnTripIcs, `tc:${t.id}`]]);
   if (t.status === 'booked' && !t.flight_at) rows.push([[L.btnFlightTime, `tf:${t.id}`]]);
   if (OPEN.includes(t.status)) rows.push([[L.btnCancelTrip, `tx:${t.id}`]]);
@@ -370,6 +412,7 @@ function offersMessage(env, t, L, lang) {
 // heardText: transcript of a voice note, when the router already made one.
 // history: recent conversation; heardText: transcript of a voice note (logged, not echoed back).
 async function buildRequest(env, uid, chat, t, text, media, L, lang, heardText = null, history = '') {
+  L = modeL(env, L);
   if (!t) t = await createTrip(env, uid);
   let r;
   try { r = await whileTyping(env, chat, () => parseRequest(env, t.fields, text, media, lang, history)); }
@@ -446,7 +489,7 @@ async function myTrips(env, L, lang, uid, chat) {
   if (!rows.length) return send(env, chat, L.noTripsYet);
   return send(env, chat, `<b>${L.yourTrips}</b>`, kb(rows.map((r) => {
     const f = JSON.parse(r.fields || '{}');
-    return [[`${code(r.id)} · ${f.destination || '?'} · ${dshort(f.date_from, lang)} · ${L.statusWord[r.status] || r.status}`, `tv:${r.id}`]];
+    return [[`${code(r.id)} · ${f.destination || '?'} · ${f.date_from ? dshort(f.date_from, lang) : f.date_flex || '?'} · ${modeL(env, L).statusWord[r.status] || r.status}`, `tv:${r.id}`]];
   })));
 }
 
@@ -511,7 +554,7 @@ export async function handleCallback(env, cq) {
   if (await handleSecCallback(env, { a, id: idStr, arg: argStr, uid, chat, L, lang, answer, dropKeyboard })) return;
 
   // My trips: a trip's card and what can be done from it
-  if (['tv', 'ov', 'td', 'aw', 'tc', 'tf', 'tx'].includes(a)) {
+  if (['tv', 'ov', 'td', 'aw', 'tc', 'tf', 'tx', 'bk', 'bl', 'rc', 'sr'].includes(a)) {
     const t = await getTrip(env, +idStr);
     if (!t || t.owner_id !== uid) return answer(L.staleBtn);
     await answer();
@@ -531,6 +574,12 @@ export async function handleCallback(env, cq) {
       case 'tc': return tgUpload(env, 'sendDocument', { chat_id: chat, caption: L.icsCaption }, 'document', `${t.code}.ics`, tripIcs(t, t.offers[t.chosen], L), 'text/calendar');
       case 'tf': await setMode(env, uid, 'flight_time', t.id); return send(env, chat, L.flightTimeAsk);
       case 'tx': return OPEN.includes(t.status) ? askCancel(env, t) : send(env, chat, L.staleBtn);
+      case 'bk': if (t.status !== 'chosen') return send(env, chat, L.staleBtn); await dropKeyboard(); return finishBooking(env, t);
+      case 'bl': return t.chosen != null ? bookingLinks(env, t, L) : send(env, chat, L.staleBtn);
+      case 'rc': // pick another option
+        if (t.status !== 'chosen') return send(env, chat, L.staleBtn);
+        t.chosen = null; await setStatus(env, t, 'offers', 'owner'); return offersMessage(env, t, L, lang);
+      case 'sr': return ['sent', 'offers'].includes(t.status) ? otherOptions(env, t) : send(env, chat, L.staleBtn);
     }
   }
 
@@ -564,7 +613,7 @@ async function approve(env, t) {
   await setStatus(env, t, 'sent', 'owner');
   await openAgentThread(env, t);
   await toAgent(env, t, templateText(env, t), 'request');
-  return send(env, t.owner_id, L.sentToAgent(fmtLocal(env, t.due_at, lang)));
+  return send(env, t.owner_id, isSearch(env) ? L.searching : L.sentToAgent(fmtLocal(env, t.due_at, lang)));
 }
 
 async function choose(env, t, i) {
@@ -574,6 +623,7 @@ async function choose(env, t, i) {
   if (!o) return send(env, t.owner_id, L.optionGone);
   t.chosen = i;
   await setStatus(env, t, 'chosen', 'owner');
+  if (isSearch(env)) return bookingLinks(env, t, L, true); // he books himself through the links
   await toAgent(env, t, A.chose(o.label, money(o, agentLang(env))), 'choice');
 
   const trav = await one(env, 'SELECT passport_enc FROM travelers WHERE telegram_id = ?', t.owner_id);
@@ -588,11 +638,19 @@ async function choose(env, t, i) {
   return send(env, t.owner_id, L.booking(esc(o.label)));
 }
 
-async function otherOptions(env, t) {
+// note: a new wish from him (search mode), e.g. "arzonroq variant topib ber".
+async function otherOptions(env, t, note = null) {
   const { L } = await strings(env, t.owner_id);
+  const previous = t.offers.map((o) => [o.airline, o.outbound, o.hotel].filter(Boolean).join(', ')).join(' | ');
   t.offers = []; t.agent_texts = []; t.clarify_asked = 0; t.recommended = null; t.reason = null;
   t.sent_at = Date.now(); t.due_at = t.sent_at + (Number(env.AGENT_SLA_MIN) || 240) * MIN; t.sla_reminded = 0;
+  if (note) t.fields.notes = [t.fields.notes, note].filter(Boolean).join('; ');
   await setStatus(env, t, 'sent', 'owner');
+  if (isSearch(env)) {
+    await logEvent(env, 'owner', 'search_again', t.id, note || '');
+    await queueSearch(env, t, { previous: note ? null : previous, note });
+    return send(env, t.owner_id, L.searchingAgain);
+  }
   await toAgent(env, t, `${AL(env).other(t.code)}\n\n${templateText(env, t)}`, 'other');
   return send(env, t.owner_id, L.askedOther);
 }
@@ -667,6 +725,7 @@ export async function handleAgentText(env, t, text, media) {
   }
   if (media.length) t.agent_texts.push('[Options read from the agent’s attachment] ' + JSON.stringify(offers));
   t.offers = offers;
+  for (const k of ['origin_en', 'destination_en', 'area_en']) if (r[k]) t.fields[k] = r[k]; // for search links
   t.recommended = Number.isInteger(r.recommended) && offers[r.recommended] ? r.recommended : null;
   t.reason = r.reason || null;
 
@@ -679,7 +738,7 @@ export async function handleAgentText(env, t, text, media) {
     if (!o.refund || o.refund === 'unknown') g.push(A.gap.terms);
     if (g.length) gaps.push(`${o.label}: ${g.join(', ')}`);
   });
-  if (gaps.length && !t.clarify_asked) {
+  if (gaps.length && !t.clarify_asked && !isSearch(env)) {
     t.clarify_asked = 1;
     await saveTrip(env, t);
     await toAgent(env, t, `${A.clarify}\n${gaps.join('\n')}`, 'clarify');
@@ -705,8 +764,25 @@ export async function handleAgentDocs(env, t, docs, caption = '') {
   await logEvent(env, 'agent', 'documents', t.id, docs.map((d) => d.name).join(', '));
   if (caption) await send(env, t.owner_id, `<b>${L.fromAgent}:</b> ${esc(caption)}`);
   if (t.status === 'booked') return;
+  await finishBooking(env, t);
+  await toAgent(env, t, AL(env).ack, 'ack');
+}
 
+// Search mode: the booking links of the chosen option, and "I booked it".
+async function bookingLinks(env, t, L, justChosen = false) {
   const o = t.offers[t.chosen] || {};
+  const rows = optionLinks(L, t, o).map(([name, u]) => [[`🔗 ${name}`, u]]);
+  if (t.status === 'chosen') rows.push([[L.btnBooked, `bk:${t.id}`]], [[L.btnPickOther, `rc:${t.id}`]]);
+  return send(env, t.owner_id, `${justChosen ? L.chosenSearch(esc(o.label)) : `<b>${esc(o.label)}</b> · ${t.code}`}\n${L.bookHint}`, kb(rows));
+}
+
+// The trip is booked: flight reminders, the summary and the calendar file.
+async function finishBooking(env, t) {
+  const { lang, L } = await strings(env, t.owner_id);
+  const o = t.offers[t.chosen] || {};
+  // Flexible dates become the dates of the chosen option.
+  if (!isDate(t.fields.date_from) && isDate(o.date_out)) t.fields.date_from = o.date_out;
+  if (!isDate(t.fields.date_to) && isDate(o.date_back)) t.fields.date_to = o.date_back;
   t.flight_at = localToUtc(env, o.outbound_datetime) ?? null;
   const back = localToUtc(env, t.fields.date_to);
   t.done_at = back != null ? back + DAY : null;
@@ -715,7 +791,6 @@ export async function handleAgentDocs(env, t, docs, caption = '') {
   await send(env, t.owner_id, await tripText(env, L, lang, t), t.flight_at ? {} : kb([[[L.btnFlightTime, `tf:${t.id}`]]]));
   await tgUpload(env, 'sendDocument', { chat_id: t.owner_id, caption: L.icsCaption }, 'document', `${t.code}.ics`, tripIcs(t, o, L), 'text/calendar')
     .catch((e) => reportError(env, e, 'send ics'));
-  await toAgent(env, t, AL(env).ack, 'ack');
 }
 
 // ======================= scheduled checks (cron) =======================
@@ -726,12 +801,12 @@ export async function runChecks(env) {
 
   for (const r of await all(env, `SELECT id FROM trips WHERE status = 'draft' AND nudged = 0 AND draft_at <= ?`, now - nudge)) {
     const t = await getTrip(env, r.id); t.nudged = 1; await saveTrip(env, t);
-    const { L } = await strings(env, t.owner_id);
+    const L = modeL(env, (await strings(env, t.owner_id)).L);
     await logEvent(env, 'cron', 'nudge_draft', t.id);
     await send(env, t.owner_id, L.nudgeDraft(esc(t.fields.destination), t.code), kb([[[L.btnApproveShort, `ap:${t.id}`]]]));
   }
 
-  for (const r of await all(env, `SELECT id FROM trips WHERE status = 'sent' AND sla_reminded = 0 AND due_at <= ?`, now)) {
+  for (const r of isSearch(env) ? [] : await all(env, `SELECT id FROM trips WHERE status = 'sent' AND sla_reminded = 0 AND due_at <= ?`, now)) {
     const t = await getTrip(env, r.id); t.sla_reminded = 1; await saveTrip(env, t);
     const { L } = await strings(env, t.owner_id);
     await logEvent(env, 'cron', 'agent_late', t.id);

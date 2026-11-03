@@ -53,8 +53,8 @@ export async function whileTyping(env, chatId, fn) {
   try { return await fn(); } finally { clearInterval(timer); }
 }
 
-// Inline keyboard: rows of [label, callback_data]
-export const kb = (rows) => ({ reply_markup: { inline_keyboard: rows.map((r) => r.map(([text, data]) => ({ text, callback_data: data }))) } });
+// Inline keyboard: rows of [label, callback_data]; a value starting with http(s):// makes a link button.
+export const kb = (rows) => ({ reply_markup: { inline_keyboard: rows.map((r) => r.map(([text, data]) => (/^https?:\/\//.test(data) ? { text, url: data } : { text, callback_data: data }))) } });
 
 // Bottom keyboard that stays under the chat: rows of labels.
 export const replyKb = (rows) => ({ reply_markup: { keyboard: rows.map((r) => r.map((text) => ({ text }))), resize_keyboard: true, is_persistent: true } });

@@ -20,9 +20,11 @@ ADMIN_ID = "5503792899,606554606"
 # Telegram user ids that get error alerts (the maintainer only). Empty = every admin.
 ALERT_ID = "5503792899"
 
-# "mock" = a fake travel agent answers automatically (for testing alone).
-# "group" = a real Telegram group; set AGENT_CHAT_ID and add the bot to that group.
-AGENT_MODE = "mock"
+# Where trip requests go:
+#   "search" = no agent: the bot finds real flights and hotels itself (Gemini + Google Search) and shows them with booking links.
+#   "group"  = a real travel agent in a Telegram group; set AGENT_CHAT_ID and add the bot to that group.
+#   "mock"   = a fake travel agent answers automatically (for testing the agent flow alone).
+AGENT_MODE = "search"
 AGENT_CHAT_ID = ""
 # "true" if the agent group has Topics turned on and the bot is an admin there: one topic per trip.
 AGENT_TOPICS = "false"

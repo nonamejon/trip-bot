@@ -19,12 +19,13 @@ const style = (lang) => STYLE[lang] || STYLE.uz;
 
 // thinking: 'low' for quick routing steps (Gemini 3 thinking level); omitted = model default.
 // timeoutMs: how long one call may take. Writing tasks (letters, offers) can take 10-25 s on Gemini 3.8 Flash.
-export async function gemini(env, { prompt, media = [], schema = null, temperature = 0.2, thinking = null, timeoutMs = 25000 }) {
+// tools: e.g. [{ google_search: {} }] to let Gemini search the web (then no schema; it returns text).
+export async function gemini(env, { prompt, media = [], schema = null, temperature = 0.2, thinking = null, timeoutMs = 25000, tools = null }) {
   const parts = [{ text: prompt }, ...media.map((m) => ({ inline_data: { mime_type: m.mime, data: m.b64 } }))];
   const generationConfig = { temperature };
   if (schema) { generationConfig.responseMimeType = 'application/json'; generationConfig.responseSchema = schema; }
   if (thinking) generationConfig.thinkingConfig = { thinkingLevel: thinking };
-  const body = JSON.stringify({ contents: [{ role: 'user', parts }], generationConfig });
+  const body = JSON.stringify({ contents: [{ role: 'user', parts }], generationConfig, ...(tools ? { tools } : {}) });
   const r = await callGemini(env, body, timeoutMs);
   const j = await r.json();
   const text = (j.candidates?.[0]?.content?.parts || []).map((p) => p.text || '').join('').trim();
@@ -112,6 +113,7 @@ const OFFERS_SCHEMA = {
         type: 'OBJECT',
         properties: {
           label: { type: 'STRING' }, airline: S(), outbound: S(), outbound_datetime: S(), return: S(), stops: S(), baggage: S(),
+          date_out: S(), date_back: S(), flight_link: S(), hotel_link: S(),
           hotel: S(), distance: S(), total_price: { type: 'NUMBER', nullable: true }, currency: S(),
           refund: { type: 'STRING', enum: ['full', 'penalty', 'none', 'unknown'] }, refund_note: S(),
         },
@@ -120,6 +122,7 @@ const OFFERS_SCHEMA = {
     },
     recommended: { type: 'INTEGER', nullable: true },
     reason: S(),
+    origin_en: S(), destination_en: S(), area_en: S(),
   },
   required: ['offers'],
 };
@@ -134,7 +137,8 @@ Everything the agent has written for this request so far (later messages may add
 ${media.length ? 'The agent also attached the file(s) included here; read them.' : ''}
 
 Return JSON:
-offers: every option the agent gave, in order, each with label (${S.labels}), airline, outbound (short, like "07:40 → 10:55"), outbound_datetime ("YYYY-MM-DDTHH:MM", local departure time), return (short, with date and time, like ${S.ret}), stops (${S.stops}), baggage (the fare's allowance, short, like "23 kg" or "hand luggage only"), hotel (name and stars), distance (to where he needs to be), total_price (number), currency (ISO code, like "USD"), refund ("full", "penalty", "none" or "unknown"), refund_note.
+offers: every option the agent gave, in order, each with label (${S.labels}), airline, outbound (short, like "07:40 → 10:55"), outbound_datetime ("YYYY-MM-DDTHH:MM", local departure time), return (short, with date and time, like ${S.ret}), stops (${S.stops}), baggage (the fare's allowance, short, like "23 kg" or "hand luggage only"), hotel (name and stars), distance (to where he needs to be), total_price (number), currency (ISO code, like "USD"), refund ("full", "penalty", "none" or "unknown"), refund_note, date_out and date_back ("YYYY-MM-DD" of the outbound and return flights; date_back null if one-way), flight_link and hotel_link (http(s) URLs given in the text for booking that flight and that hotel; null if none).
+origin_en, destination_en: the origin and destination cities in English; area_en: the area where he wants to stay, in English (e.g. "Levent, Istanbul"), or the destination city.
 recommended: index (0-based) of the best fit for the request: his wishes on flight time and hotel location first, then flexibility, then price.
 reason: one short sentence saying why.
 Write all free-text values in ${S.name}; keep airline names, flight numbers and hotel names as they are.
@@ -164,7 +168,7 @@ const nowLine = (env) => {
 const ROUTE_SCHEMA = {
   type: 'OBJECT',
   properties: {
-    intent: { type: 'STRING', enum: ['trip', 'trip_note', 'trip_status', 'trip_cancel', 'event', 'reminder', 'translate', 'letter', 'agenda', 'reminders_list', 'chat'] },
+    intent: { type: 'STRING', enum: ['trip', 'trip_note', 'trip_docs', 'trip_status', 'trip_cancel', 'event', 'reminder', 'translate', 'letter', 'agenda', 'reminders_list', 'chat'] },
     transcript: S(),
     question: S(),
     reply: S(),
@@ -196,6 +200,7 @@ His message: """${text || '(none, see attachment)'}"""
 Decide the intent:
 - trip: a new trip or flight/hotel request, or more details/changes for the trip being collected or the draft ("2 kishi", "13-noyabrdan", "add Bobur").
 - trip_note: something for the travel agent about the trip the agent is already working on (seat, meal, a question for the agent, "agentga ayt ...").
+- trip_docs: he sends his ticket, booking confirmation, boarding pass or hotel voucher (a file or photo) for his trip.
 - trip_status: he asks where his trip/booking stands.
 - trip_cancel: he wants to cancel his trip.
 - event: put a meeting/appointment/event into his calendar ("ertaga 15:00 da uchrashuv", "встреча в пятницу в 10").

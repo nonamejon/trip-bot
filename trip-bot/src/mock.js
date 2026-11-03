@@ -6,12 +6,14 @@
 import { all, run, getTrip, localISODate, money, dshort, logEvent, strings } from './util.js';
 import { gemini } from './gemini.js';
 import { handleAgentText, handleAgentDocs, templateText, reportError } from './flow.js';
-import { mirror, isMock } from './agent.js';
+import { mirror, isMock, isSearch } from './agent.js';
+import { runSearch } from './search.js';
 import { tinyPdf } from './files.js';
 import { AL } from './i18n.js';
 
+// Delayed work: the mock agent's replies, and (search mode) flight and hotel searches.
 export async function runJobs(env) {
-  if (!isMock(env)) return;
+  if (!isMock(env) && !isSearch(env)) return;
   const jobs = await all(env, 'SELECT * FROM jobs WHERE done_at IS NULL AND due_at <= ? ORDER BY due_at LIMIT 5', Date.now());
   for (const j of jobs) {
     await run(env, 'UPDATE jobs SET done_at = ? WHERE id = ?', Date.now(), j.id); // claim first so a slow run never repeats it
@@ -20,6 +22,7 @@ export async function runJobs(env) {
 }
 
 async function runJob(env, j) {
+  if (j.kind === 'search_offers') return runSearch(env, j);
   const t = await getTrip(env, j.trip_id);
   if (!t) return;
   const payload = JSON.parse(j.payload || '{}');

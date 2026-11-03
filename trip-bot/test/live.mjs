@@ -101,6 +101,29 @@ const doc = (id, bytes, name, mime, caption) => { files[id] = bytes; return step
 const trip = () => sqlite.prepare('SELECT * FROM trips ORDER BY id DESC LIMIT 1').get();
 const lastButtons = () => { const m = sent.filter((x) => x.method === 'sendMessage' && x.p.reply_markup).at(-1); return (m?.p.reply_markup.inline_keyboard || []).flat().map((b) => b.callback_data); };
 
+// ---------- search mode: real flights and hotels via Google Search ----------
+if (process.env.SCENARIO === 'search') {
+  env.AGENT_MODE = 'search';
+  await say('/start'); await tap('lg:uz', 'Oʻzbekcha');
+  for (const req of [voiceDir ? null : 'Kelasi seshanba Istanbulga, juma qaytaman, yolgʻiz, ertalabki reys, mehmonxona Levent tumanida', 'Guanchjouga shu oyning oʻrtalarida, qaysi kuni arzon boʻlsa, borib kelish, bir kishi']) {
+    if (req) await say(req); else await voice('trip');
+    if (trip().status !== 'draft') { console.log('   not a draft:', trip().status); continue; }
+    await tap(`ap:${trip().id}`, 'Tasdiqlash va qidirish');
+    await cronNow('[cron] search (Gemini + Google Search) and parse');
+    if (trip().status !== 'offers') { console.log('   no offers:', trip().status); continue; }
+    const o = JSON.parse(trip().offers);
+    console.log('   offers:', o.map((x) => `${x.airline} ${x.outbound} ${x.total_price} ${x.currency} links:${[x.flight_link, x.hotel_link].filter(Boolean).length} dates:${x.date_out}/${x.date_back}`).join(' | '));
+    const choice = lastButtons().find((d) => d.startsWith('ch:'));
+    await tap(choice, 'choose ' + choice);
+    await tap(`bk:${trip().id}`, 'Bron qildim');
+    console.log('   final:', trip().status, 'flight_at', trip().flight_at && new Date(trip().flight_at + 5 * 3600e3).toISOString().slice(0, 16));
+  }
+  report.push(`\nTelegram rule violations: ${tgErrors.length ? tgErrors.join(' | ') : 'none'}`);
+  fs.writeFileSync(reportPath, report.join('\n'));
+  console.log('violations:', tgErrors.length ? tgErrors : 'none');
+  process.exit(0);
+}
+
 // ---------- trip-request conversations from real use ----------
 const fields = () => JSON.parse(trip()?.fields || '{}');
 if (process.env.SCENARIO === 'intake') {

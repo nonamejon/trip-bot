@@ -8,10 +8,11 @@ A private Telegram assistant for one person, Azizbek, in Uzbek or Russian. Two s
 
 | Section | Main features |
 | --- | --- |
-| ✈️ Mening safarlarim (My trips) | Travel agent contact, routes, bookings, documents |
+| ✈️ Mening safarlarim (My trips) | Flight and hotel search (or a travel agent), routes, bookings, documents |
 | 🗂 Shaxsiy kotib (Personal secretary) | Calendar, reminders, translations, letters |
 
-- **Trips:** he messages or voice-notes a trip request; Gemini extracts the details and shows an approval card. Once he approves, the bot sends the request to his travel agent, parses the agent's options and shows a comparison with buttons. He picks one, the agent books it and uploads documents, and the bot sends the files, a calendar file and flight reminders. Each trip has a card (booking, documents, calendar file, write to the agent, add a missing flight time, cancel).
+- **Search mode (live now, `AGENT_MODE = "search"`):** no travel agent. After he approves, a cron job (`search_offers`, `src/search.js`) asks Gemini with Google Search for 3 real options (flights with numbers and times, baggage, approximate price, terms, a hotel, booking URLs); the text goes through the normal `parseOffers` and comparison. Every option also links to a live Google Flights search and a Booking.com search for its dates (prices from search are approximate; the card says so). He picks one, books through the links, then taps "✅ Bron qildim" or sends the ticket (router intent `trip_docs`): reminders, calendar file. "Other options" and new wishes ("arzonroq") re-run the search. A search takes 30-60 s (cron allows 15 min); a failed search is retried once, then he gets a retry button. The agent modes (`group`, `mock`) still work, so a hybrid (search + agent books) can be added later.
+- **Trips (agent modes):** he messages or voice-notes a trip request; Gemini extracts the details and shows an approval card. Once he approves, the bot sends the request to his travel agent, parses the agent's options and shows a comparison with buttons. He picks one, the agent books it and uploads documents, and the bot sends the files, a calendar file and flight reminders. Each trip has a card (booking, documents, calendar file, write to the agent, add a missing flight time, cancel).
 - **Secretary:** free messages or voice notes like "ertaga 15:00 da Hilton'da uchrashuv", "har kuni 8 da dori ichishni eslat", "rus tiliga tarjima qil: …", "elchixonaga xat yoz". Calendar events get a heads-up (default 30 min) and an overlap warning; a subscription link (`/cal/<token>.ics`) puts events and trips in his phone's calendar. Reminders can repeat (daily, weekdays, weekly, monthly) and be snoozed. Translation works on text, voice, photos and PDFs, one-off or in a translate mode. Letters can be revised or translated. A morning brief at `BRIEF_HOUR` lists the day.
 - **Trip request intake:** from the first message the bot shows the request card with ❓ for missing items and asks for all of them in one message; the questions come from code, not from Gemini. Only "where" and "roughly when" (exact dates or `date_flex`) block a request (`hardMissing`); travelers and a missing return date are asked as optional (`softMissing`) and the approve button is shown anyway. Approximate dates are never turned into exact ones. Baggage is never asked: if he mentions it, it is passed on; otherwise the agent is asked to state each fare's allowance, which the options show. Gemini only extracts, with the recent conversation as context; impossible values (travelers outside 1-20, non-ISO dates, return before departure) are dropped. Voice notes are not echoed back. One-way trips (`one_way`) need no return date; approximate dates keep a `date_flex` note ("noyabr oʻrtalari, eng arzon kun") that the card and the agent see.
 - **Errors:** alerts go to `ALERT_ID` (the maintainer), never to the owner. Passing glitches (D1 network blips, Gemini busy or slow) are only logged as `error_transient`; 3+ within 15 min give one warning per hour. Other errors alert at once.
@@ -39,6 +40,7 @@ trip-bot/                 the bot (deploy this)
   src/files.js            .ics calendar file, tiny PDF generator for the mock tickets
   src/i18n.js             every user-facing string, Uzbek and Russian (owner: O[lang]; agent: A[AGENT_LANG])
   src/secretary.js        calendar, reminders, translation, letters, morning brief, calendar feed
+  src/search.js           search mode: Gemini + Google Search for flights and hotels, Google Flights / Booking.com links
   schema.sql              D1 schema (already applied to the live database)
   test/run.mjs            end-to-end test (npm test): fake Telegram and Gemini, better-sqlite3 as D1, fake clock
   test/live.mjs           live test (npm run test:live): real Gemini, fake Telegram; writes a transcript report
@@ -96,7 +98,8 @@ any open state -> cancelled
 
 ## Testing
 
-- `npm test`: 82 checks over every flow, every message validated against Telegram's rules.
+- `npm test`: 97 checks over every flow, every message validated against Telegram's rules.
+- `SCENARIO=search npm run test:live -- <voice-dir> <report.md>`: real searches (Istanbul by voice, Guangzhou with flexible dates); last run: both found real options in ~40 s and completed.
 - `npm run test:live -- <voice-dir> <report.md>`: real Gemini 3.8 Flash on a full day of use (voice notes, PDF, Uzbek and Russian). Last run: all steps worked, slowest 19.7 s, no rule violations.
 - Timing: Gemini 3.8 Flash takes 3-25 s per call (letters and the mock agent's offers are the slow ones). The webhook works up to 25 s before answering Telegram, then up to ~30 s more in `waitUntil`; Gemini calls time out at 25 s (router, parsing), 40 s (letters, translation, agent options) or 45 s (mock agent, cron); they retry once only on a quick 429/5xx.
 
