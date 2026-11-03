@@ -21,7 +21,12 @@ import { secMenu, addEvent, addReminder, showAgenda, listReminders, doTranslate,
 
 // Baggage is not required: the agent states the allowance of each fare instead.
 const REQUIRED = ['destination', 'date_from', 'date_to', 'travelers'];
-const FIELD_KEYS = ['origin', 'destination', 'date_from', 'date_to', 'travelers', 'traveler_names', 'flight_pref', 'baggage', 'hotel', 'budget', 'notes'];
+const FIELD_KEYS = ['origin', 'destination', 'date_from', 'date_to', 'one_way', 'date_flex', 'travelers', 'traveler_names', 'flight_pref', 'baggage', 'hotel', 'budget', 'notes'];
+// "12-noyabr – 15-noyabr (3 kecha)", "15-noyabr (bir tomonga)", plus the flexibility if any
+const datesLine = (S, f, lang, Q = '?') => (f.one_way
+  ? `${f.date_from ? dshort(f.date_from, lang) : Q} (${S.oneWay})`
+  : `${f.date_from ? dshort(f.date_from, lang) : Q} – ${f.date_to ? dshort(f.date_to, lang) : Q}${nights(f.date_from, f.date_to) != null ? ` (${S.nights(nights(f.date_from, f.date_to))})` : ''}`)
+  + (f.date_flex ? ` · ${S.flexible}: ${f.date_flex}` : '');
 const isDate = (s) => /^\d{4}-\d{2}-\d{2}$/.test(s || '');
 const isTime = (s) => /^\d{2}:\d{2}$/.test(s || '');
 const MAX_MEDIA = 15 * 1024 * 1024;
@@ -31,11 +36,29 @@ const isOwner = (env, id) => String(id) === String(env.OWNER_ID);
 export const adminIds = (env) => String(env.ADMIN_ID || '').split(',').map((s) => s.trim()).filter(Boolean);
 const isAdmin = (env, id) => adminIds(env).includes(String(id));
 
+// Who gets error alerts: ALERT_ID (comma-separated), or every admin if it is not set.
+const alertIds = (env) => (env.ALERT_ID ? String(env.ALERT_ID).split(',').map((s) => s.trim()).filter(Boolean) : adminIds(env));
+
+// Passing glitches: a D1 network blip, Gemini busy or slow. The cron retries next minute and the owner already got
+// a polite "try again", so these are only logged; an alert goes out if they keep happening (3+ in 15 min, once an hour).
+const TRANSIENT = /network connection lost|connection (reset|closed)|D1_ERROR.*(overloaded|internal|timeout|reset)|timed out|HTTP (429|5\d\d)|fetch failed|too many requests/i;
+
 export async function reportError(env, e, where) {
   console.error(where, e);
+  const msg = String(e?.message || e);
   try {
-    await logEvent(env, 'bot', 'error', null, `${where}: ${e?.message || e}`);
-    for (const a of adminIds(env)) await send(env, a, `<b>Bot error</b> in ${esc(where)}:\n<code>${esc(String(e?.message || e)).slice(0, 900)}</code>`).catch(() => {});
+    const transient = TRANSIENT.test(msg);
+    await logEvent(env, 'bot', transient ? 'error_transient' : 'error', null, `${where}: ${msg}`);
+    if (transient) {
+      const now = Date.now();
+      const recent = (await one(env, `SELECT COUNT(*) c FROM events WHERE action = 'error_transient' AND ts > ?`, now - 15 * MIN)).c;
+      const alerted = await one(env, `SELECT 1 FROM events WHERE action = 'error_alert' AND ts > ?`, now - 60 * MIN);
+      if (recent < 3 || alerted) return;
+      await logEvent(env, 'bot', 'error_alert');
+      for (const a of alertIds(env)) await send(env, a, `<b>Bot warning</b>: ${recent} passing errors in 15 min (Gemini or D1 unstable). Latest, in ${esc(where)}:\n<code>${esc(msg).slice(0, 700)}</code>`).catch(() => {});
+      return;
+    }
+    for (const a of alertIds(env)) await send(env, a, `<b>Bot error</b> in ${esc(where)}:\n<code>${esc(msg).slice(0, 900)}</code>`).catch(() => {});
   } catch { /* nothing else to do */ }
 }
 
@@ -47,7 +70,7 @@ export function templateText(env, t) {
   return [
     `${A.request} #${t.code}`,
     `${A.route}: ${f.origin || A.origin} → ${f.destination}`,
-    `${A.dates}: ${dshort(f.date_from, al)} – ${dshort(f.date_to, al)}${n != null ? ` (${A.nights(n)})` : ''}`,
+    `${A.dates}: ${datesLine(A, f, al)}`,
     `${A.travelers}: ${f.travelers}${f.traveler_names ? ` (${f.traveler_names})` : ''}`,
     `${A.flight}: ${f.flight_pref || A.noPref}`,
     `${A.baggage}: ${f.baggage || A.baggageAsk}`,
@@ -64,7 +87,7 @@ function draftText(L, lang, t) {
   return [
     `<b>${L.checkTitle}</b> · ${t.code}`, '',
     `${L.route}: ${esc(f.origin || L.origin)} → ${f.destination ? esc(f.destination) : Q}`,
-    `${L.dates}: ${f.date_from ? dshort(f.date_from, lang) : Q} – ${f.date_to ? dshort(f.date_to, lang) : Q}${n != null ? ` (${L.nights(n)})` : ''}`,
+    `${L.dates}: ${esc(datesLine(L, f, lang, Q))}`,
     `${L.travelers}: ${f.travelers ? esc(f.travelers) : Q}${f.traveler_names ? ` (${esc(f.traveler_names)})` : ''}`,
     `${L.flight}: ${esc(f.flight_pref || L.noPref)}`,
     `${L.baggage}: ${f.baggage ? esc(f.baggage) : L.baggageByFare}`,
@@ -354,7 +377,8 @@ async function buildRequest(env, uid, chat, t, text, media, L, lang, heardText =
   t.fields.origin ||= L.origin;
   await logEvent(env, 'owner', 'request_input', t.id, { text, media: media.map((m) => m.mime), transcript: heardText || r.transcript || null, fields: t.fields });
 
-  const missing = REQUIRED.filter((k) => !t.fields[k]);
+  if (t.fields.one_way) delete t.fields.date_to;
+  const missing = REQUIRED.filter((k) => !t.fields[k] && !(k === 'date_to' && t.fields.one_way));
   if (missing.length) {
     // Show everything understood so far, then ask for all missing items in one message.
     if (t.status !== 'collecting') await setStatus(env, t, 'collecting', 'owner'); else await saveTrip(env, t);

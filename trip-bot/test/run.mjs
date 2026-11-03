@@ -24,7 +24,7 @@ class Stmt {
 }
 const env = {
   DB: { prepare: (s) => new Stmt(s) },
-  OWNER_ID: '111', ADMIN_ID: '111,222', AGENT_MODE: 'mock', MOCK_MIRROR: 'true', MOCK_DELAY_MIN: '2',
+  OWNER_ID: '111', ADMIN_ID: '111,222', ALERT_ID: '111', AGENT_MODE: 'mock', MOCK_MIRROR: 'true', MOCK_DELAY_MIN: '2',
   GEMINI_MODEL: 'gemini-3.8-flash', AGENT_SLA_MIN: '240', NUDGE_MIN: '120', TZ_OFFSET_MIN: '300',
   TELEGRAM_TOKEN: 'TOKEN', GEMINI_API_KEY: 'KEY', WEBHOOK_SECRET: 'sec', PUBLIC_URL: 'https://bot.example', BRIEF_HOUR: '8',
   PASSPORT_KEY: Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString('base64'),
@@ -389,6 +389,19 @@ assert(nextDue(tzE, Date.parse('2027-01-31T04:00:00Z'), 'monthly') === Date.pars
 assert(nextDue(tzE, Date.parse('2026-11-06T04:00:00Z'), 'weekdays') === Date.parse('2026-11-09T04:00:00Z'), 'weekday repeat skips the weekend');
 
 assert(sqlite.prepare(`SELECT COUNT(*) c FROM chat_log WHERE dir = 'out'`).get().c > 50 && sqlite.prepare(`SELECT COUNT(*) c FROM chat_log WHERE text LIKE '%FA1234567%'`).get().c === 0, 'both sides of the chat are logged, the passport never');
+// error alerts: passing glitches are only logged; repeated ones give one warning; real errors alert at once
+const { reportError } = await import('../src/flow.js');
+const alerts = () => sent.filter((x) => /Bot (error|warning)/.test(x.p.text || '')).length;
+let a0 = alerts();
+await reportError(env, new Error('D1_ERROR: Network connection lost.'), 'cron checks');
+assert(alerts() === a0, 'a single D1 network blip does not alert anyone');
+await reportError(env, new Error('Gemini gemini-3.8-flash timed out after 25 s'), 'routeMessage');
+await reportError(env, new Error('D1_ERROR: Network connection lost.'), 'cron checks');
+await reportError(env, new Error('D1_ERROR: Network connection lost.'), 'cron checks');
+assert(alerts() === a0 + 1 && sent.at(-1).p.chat_id === '111', 'repeated glitches: one warning, to the alert list only');
+a0 = alerts();
+await reportError(env, new Error('TypeError: x is undefined'), 'update 1');
+assert(alerts() === a0 + 1, 'a real error alerts at once');
 assert(tgErrors.length === 0, 'Telegram would accept every message' + (tgErrors.length ? ': ' + tgErrors.join(' | ') : ''));
 
 console.log('\nGemini calls:', geminiCalls.join(', '));

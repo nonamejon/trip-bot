@@ -384,3 +384,9 @@ O.uz.optionalHint = 'Xohlasangiz, reys vaqti va mehmonxona boʻyicha istaklaring
 O.ru.optionalHint = 'Если хотите, напишите и пожелания по времени рейса и отелю.';
 O.uz.baggageByFare = 'tarifga koʻra (agent har bir variantda yozadi)';
 O.ru.baggageByFare = 'по тарифу (агент укажет в каждом варианте)';
+
+// One-way and flexible dates (card and agent request)
+Object.assign(O.uz, { oneWay: 'bir tomonga', flexible: 'moslashuvchan' });
+Object.assign(O.ru, { oneWay: 'в одну сторону', flexible: 'гибко' });
+Object.assign(A.uz, { oneWay: 'bir tomonga', flexible: 'sanalar moslashuvchan' });
+Object.assign(A.ru, { oneWay: 'в одну сторону', flexible: 'даты гибкие' });

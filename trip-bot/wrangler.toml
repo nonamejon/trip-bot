@@ -17,6 +17,8 @@ database_id = "a6b9448f-7127-4913-9ea5-bc786dddc799"
 OWNER_ID = "5503792899"
 # Telegram user ids that get error alerts and admin commands, comma-separated. Can include OWNER_ID.
 ADMIN_ID = "5503792899,606554606"
+# Telegram user ids that get error alerts (the maintainer only). Empty = every admin.
+ALERT_ID = "5503792899"
 
 # "mock" = a fake travel agent answers automatically (for testing alone).
 # "group" = a real Telegram group; set AGENT_CHAT_ID and add the bot to that group.
