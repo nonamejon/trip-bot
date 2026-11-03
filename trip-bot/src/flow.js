@@ -77,7 +77,7 @@ export function templateText(env, t) {
     `${A.request} #${t.code}`,
     `${A.route}: ${f.origin || A.origin} → ${f.destination}`,
     `${A.dates}: ${datesLine(A, f, al)}`,
-    `${A.travelers}: ${f.travelers}${f.traveler_names ? ` (${f.traveler_names})` : ''}`,
+    `${A.travelers}: ${f.travelers || A.notSet}${f.traveler_names ? ` (${f.traveler_names})` : ''}`,
     `${A.flight}: ${f.flight_pref || A.noPref}`,
     `${A.baggage}: ${f.baggage || A.baggageAsk}`,
     `${A.hotel}: ${f.hotel || A.noPref}`,
@@ -151,7 +151,7 @@ async function tripText(env, L, lang, t) {
 const STEP_ORDER = ['draft', 'sent', 'offers', 'chosen', 'booked', 'done'];
 // In search mode a few steps read differently (no agent).
 const modeL = (env, L) => (isSearch(env)
-  ? { ...L, steps: { ...L.steps, ...L.stepsSearch }, statusWord: { ...L.statusWord, ...L.statusWordSearch }, btnApprove: L.btnApproveSearch, btnApproveShort: L.btnApproveSearch, passportNote: null }
+  ? { ...L, steps: { ...L.steps, ...L.stepsSearch }, statusWord: { ...L.statusWord, ...L.statusWordSearch }, btnApprove: L.btnApproveSearch, btnApproveShort: L.btnApproveSearch, passportNote: null, ...L.search }
   : L);
 
 function statusText(env, L, lang, t) {
@@ -177,7 +177,7 @@ async function chooseLanguage(env, uid, chat, lang) {
   // The command menu in this chat follows the chosen language.
   await tg(env, 'setMyCommands', { commands: COMMANDS[lang], scope: { type: 'chat', chat_id: chat } }).catch((e) => reportError(env, e, 'setMyCommands'));
   const L = O[lang];
-  return send(env, chat, `${L.langSet}\n\n${L.help}`, mainKb(L));
+  return send(env, chat, `${L.langSet}\n\n${modeL(env, L).help}`, mainKb(L));
 }
 
 // ======================= owner messages =======================
@@ -465,7 +465,7 @@ async function ownerCommand(env, msg, text) {
     case '/start':
     case '/help':
     case '/menu':
-      return send(env, chat, L.help, mainKb(L));
+      return send(env, chat, modeL(env, L).help, mainKb(L));
     case '/today': { const d = localISODate(env); return showAgenda(env, uid, chat, L, lang, d, d); }
     case '/reminders': return listReminders(env, uid, chat, L, lang);
     case '/new': return send(env, chat, L.whereWhen);
@@ -473,7 +473,7 @@ async function ownerCommand(env, msg, text) {
     case '/trips': return myTrips(env, L, lang, uid, chat);
     case '/cancel': { const t = await activeTrip(env, uid); return t ? askCancel(env, t) : send(env, chat, L.noCancel); }
     case '/passport': {
-      if (!arg) return send(env, chat, L.passportHow);
+      if (!arg) return send(env, chat, modeL(env, L).passportHow);
       await run(env, 'INSERT INTO travelers (telegram_id, name, passport_enc, updated_at) VALUES (?, ?, ?, ?) ON CONFLICT(telegram_id) DO UPDATE SET passport_enc = excluded.passport_enc, updated_at = excluded.updated_at',
         uid, msg.from.first_name || null, await encrypt(env, arg), Date.now());
       await logEvent(env, 'owner', 'passport_saved');

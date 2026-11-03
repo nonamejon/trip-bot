@@ -432,3 +432,17 @@ Object.assign(O.ru, {
   stepsSearch: { sent: 'Ищу варианты', chosen: 'Ждёт вашей брони' },
   statusWordSearch: { sent: 'поиск', chosen: 'ждёт брони' },
 });
+
+// Search mode (no agent): texts that would otherwise mention the agent
+O.uz.search = {
+  help: O.uz.help.replace('turagent bilan aloqa, marshrutlar, bronlar, hujjatlar', 'reys va mehmonxona qidirish, marshrutlar, bronlar, hujjatlar'),
+  passportHow: 'Bitta xabarda yuboring, masalan:\n<code>/passport AZIZBEK UBAYDULLAYEV, FA1234567, 2031-05-01 gacha amal qiladi</code>\nMen uni shifrlab saqlayman va xabaringizni chatdan oʻchiraman.',
+  baggageByFare: 'tarifga koʻra (har bir variantda koʻrsatiladi)',
+  askOptional: (list) => `Agar bilsangiz, yozing: ${list}. Bilmasangiz, shunday yuboravering.`,
+};
+O.ru.search = {
+  help: O.ru.help.replace('связь с турагентом, маршруты, брони, документы', 'поиск рейсов и отелей, маршруты, брони, документы'),
+  passportHow: 'Отправьте одним сообщением, например:\n<code>/passport AZIZBEK UBAYDULLAYEV, FA1234567, действителен до 2031-05-01</code>\nЯ сохраню его в зашифрованном виде и удалю ваше сообщение из чата.',
+  baggageByFare: 'по тарифу (указан в каждом варианте)',
+  askOptional: (list) => `Если знаете, напишите: ${list}. Если нет — отправляйте так.`,
+};

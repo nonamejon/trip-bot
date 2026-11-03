@@ -407,12 +407,23 @@ const flexTrip = status().id;
 assert(status().status === 'draft' && lastKb().includes(`ap:${flexTrip}`), 'flexible dates: approve button right away');
 assert(/Sanalar: [^\n❓]*moslashuvchan/.test(lastText()) && !lastText().includes('15-noyabr') && lastText().includes('Bilmasangiz'), 'card shows the flexible window, no invented date, optional questions only');
 await tap(`ap:${flexTrip}`);
+assert(!/undefined/.test(sqlite.prepare(`SELECT detail FROM events WHERE action = 'to_agent:request' AND trip_id = ?`).get(flexTrip)?.detail || ''), 'agent request: unknown traveler count shows as not set, not "undefined"');
 assert(/eng arzon sanalarni/.test(sqlite.prepare(`SELECT detail FROM events WHERE action = 'to_agent:request' AND trip_id = ?`).get(flexTrip)?.detail || ''), 'agent is asked for the cheapest dates');
 await say('/cancel'); await tap(`cy:${flexTrip}`);
 
 // ---------- search mode: no agent, the bot finds flights and hotels itself ----------
 env.AGENT_MODE = 'search';
 await say('Istanbul again please, same as before, 23 kg'); show('search mode: request');
+assert(!/agent/i.test(lastText()), 'search mode: the request card never mentions an agent');
+await tap(`cx:${status().id}`);
+await say('Guanchjouga oyning oʻrtalarida, qaysi kuni arzon boʻlsa, borib kelish');
+assert(!/agent/i.test(lastText()) && lastText().includes('har bir variantda koʻrsatiladi') && lastText().includes('shunday yuboravering.'), 'search mode: baggage and optional lines without the agent');
+await tap(`cx:${status().id}`);
+await say('/help');
+assert(lastText().includes('reys va mehmonxona qidirish') && !/turagent/i.test(lastText()), 'search mode: help describes search, not an agent');
+await say('/passport');
+assert(!/agent/i.test(lastText()), 'search mode: passport instructions do not mention an agent');
+await say('Istanbul again please, same as before, 23 kg');
 const sTrip = status().id;
 await tap(`ap:${sTrip}`); show('search mode: approve');
 assert(sent.filter((x) => x.method === 'sendMessage').at(-2).p.reply_markup.inline_keyboard[0][0].text === 'Tasdiqlash va qidirish', 'search mode: the card says approve and search');

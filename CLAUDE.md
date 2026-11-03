@@ -98,7 +98,7 @@ any open state -> cancelled
 
 ## Testing
 
-- `npm test`: 97 checks over every flow, every message validated against Telegram's rules.
+- `npm test`: 102 checks over every flow, every message validated against Telegram's rules.
 - `SCENARIO=search npm run test:live -- <voice-dir> <report.md>`: real searches (Istanbul by voice, Guangzhou with flexible dates); last run: both found real options in ~40 s and completed.
 - `npm run test:live -- <voice-dir> <report.md>`: real Gemini 3.8 Flash on a full day of use (voice notes, PDF, Uzbek and Russian). Last run: all steps worked, slowest 19.7 s, no rule violations.
 - Timing: Gemini 3.8 Flash takes 3-25 s per call (letters and the mock agent's offers are the slow ones). The webhook works up to 25 s before answering Telegram, then up to ~30 s more in `waitUntil`; Gemini calls time out at 25 s (router, parsing), 40 s (letters, translation, agent options) or 45 s (mock agent, cron); they retry once only on a quick 429/5xx.
