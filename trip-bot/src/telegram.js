@@ -1,5 +1,7 @@
 // Thin Telegram Bot API client.
 
+import { isUser } from './util.js';
+
 const api = (env, method) => `https://api.telegram.org/bot${env.TELEGRAM_TOKEN}/${method}`;
 
 export async function tg(env, method, params = {}) {
@@ -34,8 +36,8 @@ export async function download(env, fileId) {
 
 export async function send(env, chatId, text, extra = {}) {
   const m = await tg(env, 'sendMessage', { chat_id: chatId, text, parse_mode: 'HTML', disable_web_page_preview: true, ...extra });
-  // Keep the bot's side of the owner's conversation (with its buttons) for context and debugging.
-  if (env.DB && String(chatId) === String(env.OWNER_ID)) {
+  // Keep the bot's side of each user's conversation (with its buttons) for context and debugging.
+  if (env.DB && isUser(env, chatId)) {
     const btns = (extra.reply_markup?.inline_keyboard || []).flat().map((b) => b.text);
     const plain = String(text).replace(/<[^>]+>/g, '').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
     await env.DB.prepare('INSERT INTO chat_log (owner_id, dir, text, ts) VALUES (?, ?, ?, ?)')

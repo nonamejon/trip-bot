@@ -60,7 +60,7 @@ Admin commands (from `ADMIN_ID`):
 
 | Command | What it does |
 | --- | --- |
-| `/trips` | List recent trips |
+| `/alltrips` | List recent trips of all users (`/trips` shows your own) |
 | `/trip T-0001` | Show one trip's full record |
 | `/log 30` | Show the last 30 entries of the audit log |
 | `/jobs` | Show the mock agent's pending replies |

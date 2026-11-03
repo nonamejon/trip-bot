@@ -10,7 +10,7 @@
 import {
   MIN, DAY, one, all, run, logEvent, getTrip, activeTrip, createTrip, saveTrip, setStatus, WITH_AGENT, OPEN, code,
   fmtLocal, hmLocal, dshort, localToUtc, localISODate, addDaysISO, nights, esc, money, refundWord, b64, encrypt, decrypt,
-  getLang, setLang, strings, getMode, setMode, clearMode, logChat, recentChat,
+  getLang, setLang, strings, getMode, setMode, clearMode, logChat, recentChat, adminIds, isUser,
 } from './util.js';
 import { tg, tgUpload, send, typing, whileTyping, kb, replyKb, download } from './telegram.js';
 import { parseRequest, parseOffers, transcribe, routeMessage, parseWhen, parseTicket } from './gemini.js';
@@ -38,9 +38,9 @@ const isDate = (s) => /^\d{4}-\d{2}-\d{2}$/.test(s || '');
 const isTime = (s) => /^\d{2}:\d{2}$/.test(s || '');
 const MAX_MEDIA = 15 * 1024 * 1024;
 
-const isOwner = (env, id) => String(id) === String(env.OWNER_ID);
+const isOwner = isUser; // every user (owner or admin) has their own assistant
 // ADMIN_ID may list several people, comma-separated.
-export const adminIds = (env) => String(env.ADMIN_ID || '').split(',').map((s) => s.trim()).filter(Boolean);
+export { adminIds };
 const isAdmin = (env, id) => adminIds(env).includes(String(id));
 
 // Who gets error alerts: ALERT_ID (comma-separated), or every admin if it is not set.
@@ -218,7 +218,6 @@ export async function handleOwnerMessage(env, msg) {
   const text = (msg.text || msg.caption || '').trim();
 
   if (text.startsWith('/')) return ownerCommand(env, msg, text);
-  if (!isOwner(env, uid)) return send(env, chat, 'You are set up as admin only. Admin commands: /trips /trip /log /jobs /now /fire /setstatus');
 
   const lang = await getLang(env, uid);
   if (!lang) return askLanguage(env, chat);
@@ -507,7 +506,7 @@ async function myTrips(env, L, lang, uid, chat) {
 }
 
 const ADMIN = {
-  async '/trips'(env, chat) {
+  async '/alltrips'(env, chat) { // every user's trips (the user command /trips shows your own)
     const rows = await all(env, 'SELECT id, status, fields, updated_at FROM trips ORDER BY id DESC LIMIT 15');
     return send(env, chat, rows.length ? rows.map((r) => `${code(r.id)} · ${r.status} · ${esc(JSON.parse(r.fields || '{}').destination || '?')} · ${fmtLocal(env, r.updated_at)}`).join('\n') : 'No trips.');
   },

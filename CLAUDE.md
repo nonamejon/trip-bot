@@ -4,7 +4,7 @@ Read `CHAT_LOG.md` for the full history. This file says what exists now and what
 
 ## What this is
 
-A private Telegram assistant for one person, Azizbek, in Uzbek or Russian. Two sections, on a keyboard at the bottom of the chat:
+A private Telegram assistant for Azizbek (and anyone in `ADMIN_ID`, each with their own trips, calendar, reminders and chat: `util.userIds`), in Uzbek or Russian. Two sections, on a keyboard at the bottom of the chat:
 
 | Section | Main features |
 | --- | --- |
@@ -97,11 +97,11 @@ any open state -> cancelled
    - Pick an option and wait for the PDFs, the `.ics` file and the reminders.
    - `/fire T-0001` sends a trip's reminders immediately.
    - While testing, lower `AGENT_SLA_MIN` and `NUDGE_MIN` in `wrangler.toml` to see those timers fire.
-9. Watch the logs with `npx wrangler tail`. Admin commands: `/trips`, `/trip T-0001`, `/log 30`, `/jobs`, `/now`, `/fire`, `/setstatus`.
+9. Watch the logs with `npx wrangler tail`. Admin commands: `/alltrips`, `/trip T-0001`, `/log 30`, `/jobs`, `/now`, `/fire`, `/setstatus`.
 
 ## Testing
 
-- `npm test`: 116 checks
+- `npm test`: 119 checks
 - `npm run eval`: 37 real messages (several from actual use) against the real Gemini; must stay at 95%+ before deploying a prompt change. Last run: 37/37. over every flow, every message validated against Telegram's rules.
 - `SCENARIO=search npm run test:live -- <voice-dir> <report.md>`: real searches (Istanbul by voice, Guangzhou with flexible dates); last run: both found real options in ~40 s and completed.
 - `npm run test:live -- <voice-dir> <report.md>`: real Gemini 3.8 Flash on a full day of use (voice notes, PDF, Uzbek and Russian). Last run: all steps worked, slowest 19.7 s, no rule violations.

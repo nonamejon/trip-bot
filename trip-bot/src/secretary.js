@@ -3,7 +3,7 @@
 
 import {
   MIN, HOUR, DAY, one, all, run, logEvent, esc, fmtLocal, hmLocal, localToUtc, localISODate, tz,
-  setMode, strings, dayStart, addDaysISO, dayLabel, getTrip,
+  setMode, strings, dayStart, addDaysISO, dayLabel, getTrip, isUser, userIds,
 } from './util.js';
 import { send, sendLong, kb, tgUpload, whileTyping } from './telegram.js';
 import { translate, writeLetter, reviseLetter } from './gemini.js';
@@ -194,12 +194,11 @@ const hex = (buf) => [...new Uint8Array(buf)].map((b) => b.toString(16).padStart
 export async function calToken(env, uid) {
   return hex(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(`${env.WEBHOOK_SECRET}:cal:${uid}`))).slice(0, 32);
 }
-export async function calUrl(env, uid) { return `${String(env.PUBLIC_URL || '').replace(/\/$/, '')}/cal/${await calToken(env, uid)}.ics`; }
+export async function calUrl(env, uid) { return `${String(env.PUBLIC_URL || '').replace(/\/$/, '')}/cal/${uid}/${await calToken(env, uid)}.ics`; }
 
-// GET /cal/<token>.ics -> the owner's calendar, or null if the token is wrong.
-export async function calendarFeed(env, token) {
-  const uid = env.OWNER_ID;
-  if (!uid || token !== (await calToken(env, uid))) return null;
+// GET /cal/<uid>/<token>.ics -> that user's calendar, or null if the user or the token is wrong.
+export async function calendarFeed(env, uid, token) {
+  if (!isUser(env, uid) || token !== (await calToken(env, uid))) return null;
   const events = await all(env, 'SELECT * FROM cal_events WHERE owner_id = ? AND start_at > ? ORDER BY start_at', uid, Date.now() - 60 * DAY);
   const trips = [];
   for (const r of await all(env, `SELECT id FROM trips WHERE owner_id = ? AND status IN ('chosen', 'booked', 'done')`, uid)) trips.push(await getTrip(env, r.id));
@@ -310,8 +309,9 @@ export async function secretaryChecks(env) {
 
 // Once a day between BRIEF_HOUR and noon (Tashkent time): today's plan, if there is anything.
 async function morningBrief(env) {
-  const uid = env.OWNER_ID;
-  if (!uid) return;
+  for (const uid of userIds(env)) await morningBriefFor(env, uid);
+}
+async function morningBriefFor(env, uid) {
   const hour = new Date(Date.now() + tz(env)).getUTCHours();
   if (hour < (Number(env.BRIEF_HOUR) || 8) || hour >= 12) return;
   const p = await one(env, 'SELECT lang, brief_date FROM prefs WHERE telegram_id = ?', uid);

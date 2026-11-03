@@ -15,6 +15,12 @@ export async function logEvent(env, actor, action, tripId = null, detail = null)
     Date.now(), actor, action, tripId, detail == null ? null : (typeof detail === 'string' ? detail : JSON.stringify(detail)));
 }
 
+// ---------- who may use the bot ----------
+// The owner and every admin use the assistant, each with their own trips, calendar, reminders and chat.
+export const adminIds = (env) => String(env.ADMIN_ID || '').split(',').map((s) => s.trim()).filter(Boolean);
+export const userIds = (env) => [...new Set([String(env.OWNER_ID || '').trim(), ...adminIds(env)].filter(Boolean))];
+export const isUser = (env, id) => id != null && userIds(env).includes(String(id));
+
 // ---------- language (per person: 'uz' | 'ru'; null until they pick) ----------
 export async function getLang(env, uid) {
   const r = await one(env, 'SELECT lang FROM prefs WHERE telegram_id = ?', uid);

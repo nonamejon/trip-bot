@@ -1,13 +1,13 @@
 // Cloudflare Worker entry point.
 //   POST /telegram         Telegram webhook (checked with WEBHOOK_SECRET)
 //   GET  /setup?key=...    one-time: points the Telegram webhook at this Worker and sets the command list
-//   GET  /cal/<token>.ics  the owner's calendar, for subscribing from a phone (link comes from the bot)
+//   GET  /cal/<user id>/<token>.ics  a user's calendar, for subscribing from a phone (link comes from the bot)
 //   cron (every minute)    mock agent replies, trip checks, secretary reminders and the morning brief
 
-import { run, esc, strings } from './util.js';
+import { run, esc, strings, isUser } from './util.js';
 import { COMMANDS, STRANGER, AL } from './i18n.js';
 import { tg, send } from './telegram.js';
-import { handleOwnerMessage, handleCallback, handleAgentMessage, runChecks, reportError, adminIds } from './flow.js';
+import { handleOwnerMessage, handleCallback, handleAgentMessage, runChecks, reportError } from './flow.js';
 import { runJobs } from './mock.js';
 import { agentMode } from './agent.js';
 import { calendarFeed, secretaryChecks } from './secretary.js';
@@ -52,9 +52,10 @@ export default {
       return Response.json({ webhook_set: hook, bot: '@' + me.username, agent_mode: isMock(env) ? 'mock' : 'group' });
     }
 
-    const cal = url.pathname.match(/^\/cal\/([0-9a-f]{32})\.ics$/);
+    // /cal/<user id>/<token>.ics; the older /cal/<token>.ics is the owner's
+    const cal = url.pathname.match(/^\/cal\/(?:(\d+)\/)?([0-9a-f]{32})\.ics$/);
     if (cal && req.method === 'GET') {
-      const ics = await calendarFeed(env, cal[1]);
+      const ics = await calendarFeed(env, cal[1] || env.OWNER_ID, cal[2]);
       if (!ics) return new Response('not found', { status: 404 });
       return new Response(ics, { headers: { 'content-type': 'text/calendar; charset=utf-8', 'cache-control': 'no-store' } });
     }
@@ -74,7 +75,7 @@ export default {
 async function handleUpdate(env, update) {
   // Telegram may deliver the same update twice; handle each one once.
   const chat = update.message?.chat?.id ?? update.callback_query?.message?.chat?.id;
-  const ownerChat = chat != null && String(chat) === String(env.OWNER_ID) ? chat : null;
+  const ownerChat = isUser(env, chat) ? chat : null; // users' chats are watched by the watchdog
   const ins = await run(env, 'INSERT OR IGNORE INTO updates (update_id, ts, chat_id) VALUES (?, ?, ?)', update.update_id, Date.now(), ownerChat);
   if (!ins.meta?.changes) throw Object.assign(new Error('duplicate'), { duplicate: true });
 
@@ -84,8 +85,7 @@ async function handleUpdate(env, update) {
   if (!msg || !msg.from || msg.from.is_bot) return;
 
   if (msg.chat.type === 'private') {
-    const known = [env.OWNER_ID, ...adminIds(env)].filter(Boolean).map(String);
-    if (!known.includes(String(msg.from.id))) {
+    if (!isUser(env, msg.from.id)) {
       return send(env, msg.chat.id, STRANGER(esc(msg.from.id)));
     }
     return handleOwnerMessage(env, msg);
@@ -99,6 +99,6 @@ async function handleUpdate(env, update) {
 // Tell the owner something went wrong with his message (instead of silence).
 async function apologize(env, update) {
   const chat = update.message?.chat?.id ?? update.callback_query?.message?.chat?.id;
-  if (chat == null || String(chat) !== String(env.OWNER_ID)) return;
+  if (!isUser(env, chat)) return;
   try { const { L } = await strings(env, chat); await send(env, chat, L.sorryError); } catch { /* nothing else to do */ }
 }

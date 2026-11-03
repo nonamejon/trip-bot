@@ -320,11 +320,18 @@ await say('/log 12'); show('admin /log');
 // a second admin who is not the owner
 const admin2 = (text) => update({ message: { message_id: ++msgId, from: { id: 222, is_bot: false }, chat: { id: 222, type: 'private' }, text } });
 let n = sent.length;
-await admin2('/trips'); show('second admin /trips');
-assert(sent.slice(n).some((x) => x.p.chat_id === 222 && /T-0003 · cancelled/.test(x.p.text)), 'second admin can use admin commands');
+await admin2('/alltrips'); show('second admin /alltrips');
+assert(sent.slice(n).some((x) => x.p.chat_id === 222 && /T-0003 · cancelled/.test(x.p.text)), 'admins see every trip with /alltrips');
 n = sent.length;
 await admin2('hello'); show('second admin plain message');
-assert(sent.slice(n).some((x) => x.p.chat_id === 222 && x.p.text.includes('admin only')), 'second admin is not treated as the owner');
+assert(sent.slice(n).some((x) => x.p.chat_id === 222 && JSON.stringify(x.p.reply_markup || '').includes('lg:uz')), 'an admin is a user too: first message asks for a language');
+const tapAs = (who, data) => update({ callback_query: { id: 'cq' + updateId, from: { id: who, is_bot: false }, data, message: { message_id: msgId, chat: { id: who } } } });
+await tapAs(222, 'lg:ru');
+n = sent.length;
+await admin2('/trips');
+assert(sent.slice(n).some((x) => x.p.chat_id === 222 && x.p.text === 'Поездок пока нет. Напишите, куда и когда вам нужно поехать.'), "an admin's /trips shows their own trips (none), not the owner's");
+await tapAs(222, `tv:${tripId}`);
+assert(sent.at(-1).method === 'answerCallbackQuery' && sent.at(-1).p.text === 'Эта кнопка устарела.', "an admin cannot open the owner's trip");
 
 // ---------- Personal secretary ----------
 const mode = () => sqlite.prepare('SELECT mode FROM prefs WHERE telegram_id = 111').get()?.mode ?? null;
@@ -406,11 +413,12 @@ await say('rahmat'); show('small talk');
 assert(lastText() === 'Arzimaydi!', 'small talk answered');
 
 await tap('cl'); show('phone calendar link');
-const feedUrl = lastText().match(/https:\/\/bot\.example\/cal\/[0-9a-f]{32}\.ics/)?.[0];
+const feedUrl = lastText().match(/https:\/\/bot\.example\/cal\/111\/[0-9a-f]{32}\.ics/)?.[0];
 const feed = await worker.fetch(new Request(feedUrl), env, ctx);
 const ics = await feed.text();
 assert(feed.status === 200 && /text\/calendar/.test(feed.headers.get('content-type')) && ics.includes('Bank bilan') && ics.includes('BEGIN:VALARM') && ics.includes(`T-000${tripId}-flight`), 'calendar feed has events and trips');
 assert((await worker.fetch(new Request('https://bot.example/cal/' + '0'.repeat(32) + '.ics'), env, ctx)).status === 404, 'wrong calendar link is refused');
+assert((await worker.fetch(new Request(feedUrl.replace('/cal/111/', '/cal/222/')), env, ctx)).status === 404, "one user's calendar token does not open another's");
 
 // repeat rules
 const tzE = { TZ_OFFSET_MIN: '300' };
