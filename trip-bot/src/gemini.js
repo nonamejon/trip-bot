@@ -91,8 +91,8 @@ His new message: """${text || '(none, see attachment)'}"""
 Return the complete, updated trip request as JSON:
 - destination: the city (add the country only if unclear).
 - origin: where he flies from; "${S.origin}" unless he says otherwise.
-- date_from, date_to: ALWAYS digits "YYYY-MM-DD", even though other values are in ${S.name}. "12-15 noyabr" / "с 12 по 15 ноября" means date_from = the 12th and date_to = the 15th. A length ("3 kunga", "на неделю") counts from date_from. Use the nearest future date.
-- date_flex: if his dates are approximate or he wants the cheapest day ("oyning oʻrtalarida", "arzonroq kuni", "в конце месяца", "±2 kun"), describe that flexibility briefly (e.g. "noyabr oʻrtalari, eng arzon kun") and set date_from to the middle of that window; else null.
+- date_from, date_to: only exact dates he gave; ALWAYS digits "YYYY-MM-DD", even though other values are in ${S.name}. "12-15 noyabr" / "с 12 по 15 ноября" means date_from = the 12th and date_to = the 15th. A length ("3 kunga", "на неделю") counts from date_from. Use the nearest future date.
+- date_flex: if his dates are approximate or he wants the cheapest day ("oyning oʻrtalarida", "arzonroq kuni", "в конце месяца", "±2 kun"), describe it briefly, including the return if it is flexible too (e.g. "noyabr oʻrtalari, borib-kelish eng arzon kunlarda"), and leave date_from/date_to null unless he gave exact dates. Never turn an approximate date into an exact one. Else null.
 - one_way: true if he wants a one-way ticket ("bir tomonga", "в одну сторону", "qaytish kerak emas"); then date_to is null. Otherwise null.
 - travelers: the number of people travelling, ONLY if he says it ("yolgʻiz", "bir kishilik", "1 kishi", "вдвоём", "3 kishi"). Numbers in dates, times, prices or lengths of stay are never the traveler count. null if he has not said.
 - baggage: ONLY what he says ("faqat qoʻl yuki", "1 chamadon", "23 kg"); null if he has not said. Never assume a default and never ask for it.

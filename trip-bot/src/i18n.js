@@ -390,3 +390,11 @@ Object.assign(O.uz, { oneWay: 'bir tomonga', flexible: 'moslashuvchan' });
 Object.assign(O.ru, { oneWay: 'в одну сторону', flexible: 'гибко' });
 Object.assign(A.uz, { oneWay: 'bir tomonga', flexible: 'sanalar moslashuvchan' });
 Object.assign(A.ru, { oneWay: 'в одну сторону', flexible: 'даты гибкие' });
+
+// Optional questions (he can send without answering) and the agent's note for flexible dates
+O.uz.askOptional = (list) => `Agar bilsangiz, yozing: ${list}. Bilmasangiz, shunday yuboravering — agent aniqlashtiradi.`;
+O.ru.askOptional = (list) => `Если знаете, напишите: ${list}. Если нет — отправляйте так, агент уточнит.`;
+O.uz.field.date_from = 'qachon (taxminan boʻlsa ham)';
+O.ru.field.date_from = 'когда (хотя бы примерно)';
+A.uz.flexAsk = 'Sanalar moslashuvchan: eng arzon sanalarni taklif qiling.';
+A.ru.flexAsk = 'Даты гибкие: предложите самые дешёвые даты.';

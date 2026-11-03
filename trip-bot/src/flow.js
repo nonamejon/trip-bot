@@ -19,14 +19,19 @@ import { tripIcs } from './files.js';
 import { O, AL, agentLang, PICK_TEXT, PICK_BUTTONS, COMMANDS, KB_TRIPS, KB_SEC } from './i18n.js';
 import { secMenu, addEvent, addReminder, showAgenda, listReminders, doTranslate, doLetter, doRevise, handleSecCallback } from './secretary.js';
 
-// Baggage is not required: the agent states the allowance of each fare instead.
-const REQUIRED = ['destination', 'date_from', 'date_to', 'travelers'];
+// Only "where" and "roughly when" block a request; the rest is asked as optional and he can send without it.
+// Baggage is never asked: the agent states the allowance of each fare.
+const hardMissing = (f) => [!f.destination && 'destination', !f.date_from && !f.date_flex && 'date_from'].filter(Boolean);
+const softMissing = (f) => [!f.travelers && 'travelers', f.date_from && !f.date_to && !f.one_way && !f.date_flex && 'date_to'].filter(Boolean);
 const FIELD_KEYS = ['origin', 'destination', 'date_from', 'date_to', 'one_way', 'date_flex', 'travelers', 'traveler_names', 'flight_pref', 'baggage', 'hotel', 'budget', 'notes'];
 // "12-noyabr – 15-noyabr (3 kecha)", "15-noyabr (bir tomonga)", plus the flexibility if any
-const datesLine = (S, f, lang, Q = '?') => (f.one_way
-  ? `${f.date_from ? dshort(f.date_from, lang) : Q} (${S.oneWay})`
-  : `${f.date_from ? dshort(f.date_from, lang) : Q} – ${f.date_to ? dshort(f.date_to, lang) : Q}${nights(f.date_from, f.date_to) != null ? ` (${S.nights(nights(f.date_from, f.date_to))})` : ''}`)
-  + (f.date_flex ? ` · ${S.flexible}: ${f.date_flex}` : '');
+const datesLine = (S, f, lang, Q = '?') => {
+  if (f.date_flex && !f.date_from) return `${f.date_flex} (${S.flexible})`; // no invented exact date
+  return (f.one_way
+    ? `${f.date_from ? dshort(f.date_from, lang) : Q} (${S.oneWay})`
+    : `${f.date_from ? dshort(f.date_from, lang) : Q} – ${f.date_to ? dshort(f.date_to, lang) : Q}${nights(f.date_from, f.date_to) != null ? ` (${S.nights(nights(f.date_from, f.date_to))})` : ''}`)
+    + (f.date_flex ? ` · ${S.flexible}: ${f.date_flex}` : '');
+};
 const isDate = (s) => /^\d{4}-\d{2}-\d{2}$/.test(s || '');
 const isTime = (s) => /^\d{2}:\d{2}$/.test(s || '');
 const MAX_MEDIA = 15 * 1024 * 1024;
@@ -77,6 +82,7 @@ export function templateText(env, t) {
     `${A.hotel}: ${f.hotel || A.noPref}`,
     `${A.budget}: ${f.budget || A.notSet}`,
     f.notes ? `${A.notes}: ${f.notes}` : null,
+    f.date_flex ? A.flexAsk : null,
     A.ask,
   ].filter(Boolean).join('\n');
 }
@@ -87,7 +93,7 @@ function draftText(L, lang, t) {
   return [
     `<b>${L.checkTitle}</b> · ${t.code}`, '',
     `${L.route}: ${esc(f.origin || L.origin)} → ${f.destination ? esc(f.destination) : Q}`,
-    `${L.dates}: ${esc(datesLine(L, f, lang, Q))}`,
+    `${L.dates}: ${esc(datesLine(L, f, lang, f.date_flex ? '—' : Q))}`,
     `${L.travelers}: ${f.travelers ? esc(f.travelers) : Q}${f.traveler_names ? ` (${esc(f.traveler_names)})` : ''}`,
     `${L.flight}: ${esc(f.flight_pref || L.noPref)}`,
     `${L.baggage}: ${f.baggage ? esc(f.baggage) : L.baggageByFare}`,
@@ -331,7 +337,7 @@ async function tripCard(env, chat, L, lang, t) {
   const f = t.fields, o = t.chosen != null ? t.offers[t.chosen] : null, n = nights(f.date_from, f.date_to);
   const docs = await all(env, 'SELECT id FROM documents WHERE trip_id = ?', t.id);
   const lines = [`<b>✈️ ${route(L, t)}</b> · ${t.code}`, `${L.statusLabel}: <b>${L.statusWord[t.status] || t.status}</b>`];
-  if (f.date_from) lines.push(`🗓 ${dshort(f.date_from, lang)} – ${dshort(f.date_to, lang)}${n != null ? ` (${L.nights(n)})` : ''}`);
+  if (f.date_from || f.date_flex) lines.push(`🗓 ${esc(datesLine(L, f, lang, '—'))}`);
   if (f.travelers) lines.push(`👤 ${L.travelers}: ${esc(f.travelers)}${f.traveler_names ? ` (${esc(f.traveler_names)})` : ''}`);
   if (o) {
     lines.push('', `<b>${L.bookingTitle}: ${esc(o.label)}</b> · ${esc(money(o, lang))}`,
@@ -378,17 +384,19 @@ async function buildRequest(env, uid, chat, t, text, media, L, lang, heardText =
   await logEvent(env, 'owner', 'request_input', t.id, { text, media: media.map((m) => m.mime), transcript: heardText || r.transcript || null, fields: t.fields });
 
   if (t.fields.one_way) delete t.fields.date_to;
-  const missing = REQUIRED.filter((k) => !t.fields[k] && !(k === 'date_to' && t.fields.one_way));
-  if (missing.length) {
-    // Show everything understood so far, then ask for all missing items in one message.
+  const hard = hardMissing(t.fields), soft = softMissing(t.fields);
+  const hint = !t.fields.flight_pref && !t.fields.hotel ? L.optionalHint : '';
+  if (hard.length) {
+    // Where or when is missing: show the card and ask for it (and the optional items) in one message.
     if (t.status !== 'collecting') await setStatus(env, t, 'collecting', 'owner'); else await saveTrip(env, t);
-    const optional = !t.fields.flight_pref && !t.fields.hotel ? `\n${L.optionalHint}` : '';
-    return send(env, chat, `${draftText(L, lang, t)}\n\n<b>${L.askMissing(missing.filter((k) => k !== 'date_to' || !missing.includes('date_from')).map((k) => L.field[k]).join(', '))}</b>${optional}`,
-      kb([[[L.btnCancel, `cx:${t.id}`]]]));
+    const ask = [`<b>${L.askMissing(hard.map((k) => L.field[k]).join(', '))}</b>`, soft.length ? L.askOptional(soft.map((k) => L.field[k]).join(', ')) : '', hint].filter(Boolean).join('\n');
+    return send(env, chat, `${draftText(L, lang, t)}\n\n${ask}`, kb([[[L.btnCancel, `cx:${t.id}`]]]));
   }
+  // Enough to send. Optional gaps are asked, but the approve button is always there.
   t.draft_at = Date.now(); t.nudged = 0;
   await setStatus(env, t, 'draft', 'owner');
-  return send(env, chat, draftText(L, lang, t), kb([[[L.btnApprove, `ap:${t.id}`]], [[L.btnEdit, `ed:${t.id}`], [L.btnCancel, `cx:${t.id}`]]]));
+  const ask = [soft.length ? L.askOptional(soft.map((k) => L.field[k]).join(', ')) : '', soft.length ? hint : ''].filter(Boolean).join('\n');
+  return send(env, chat, draftText(L, lang, t) + (ask ? `\n\n${ask}` : ''), kb([[[L.btnApprove, `ap:${t.id}`]], [[L.btnEdit, `ed:${t.id}`], [L.btnCancel, `cx:${t.id}`]]]));
 }
 
 // ======================= commands =======================

@@ -66,7 +66,9 @@ globalThis.fetch = async (url, init = {}) => {
       geminiCalls.push('parseRequest' + (hasMedia ? '+audio' : ''));
       lastParsePrompt = prompt;
       const nm = (prompt.match(/His new message: "{3}([\s\S]*?)"{3}/) || [])[1] || '';
-      out = /Dubai/.test(nm)
+      out = /arzon/.test(nm)
+        ? { destination: 'Guanchjou', origin: 'Toshkent', date_flex: 'noyabr oʻrtalari, borib-kelish eng arzon kunlarda', travelers: null }
+        : /Dubai/.test(nm)
         ? { destination: 'Dubai', origin: 'Tashkent', travelers: /45/.test(nm) ? 45 : null }
         : { transcript: hasMedia ? "Istanbulga 12-noyabr ertalab uchishim kerak, 3 kunga." : null, origin: 'Tashkent', destination: 'Istanbul', date_from: '2026-11-12', date_to: '2026-11-15', travelers: 1, flight_pref: 'morning, direct', baggage: /kg/.test(nm) ? '23 kg' : null, hotel: 'Levent, near the meeting', budget: null, notes: null };
     } else if (prompt.startsWith('You are a travel agent in Tashkent. Today')) {
@@ -389,6 +391,15 @@ assert(nextDue(tzE, Date.parse('2027-01-31T04:00:00Z'), 'monthly') === Date.pars
 assert(nextDue(tzE, Date.parse('2026-11-06T04:00:00Z'), 'weekdays') === Date.parse('2026-11-09T04:00:00Z'), 'weekday repeat skips the weekend');
 
 assert(sqlite.prepare(`SELECT COUNT(*) c FROM chat_log WHERE dir = 'out'`).get().c > 50 && sqlite.prepare(`SELECT COUNT(*) c FROM chat_log WHERE text LIKE '%FA1234567%'`).get().c === 0, 'both sides of the chat are logged, the passport never');
+// flexible dates: no invented date, nothing blocks, the agent is asked for the cheapest dates
+await say('Guanchjouga oyning oʻrtalarida, qaysi kuni arzon boʻlsa, borib kelish'); show('flexible dates');
+const flexTrip = status().id;
+assert(status().status === 'draft' && lastKb().includes(`ap:${flexTrip}`), 'flexible dates: approve button right away');
+assert(/Sanalar: [^\n❓]*moslashuvchan/.test(lastText()) && !lastText().includes('15-noyabr') && lastText().includes('Bilmasangiz'), 'card shows the flexible window, no invented date, optional questions only');
+await tap(`ap:${flexTrip}`);
+assert(/eng arzon sanalarni/.test(sqlite.prepare(`SELECT detail FROM events WHERE action = 'to_agent:request' AND trip_id = ?`).get(flexTrip)?.detail || ''), 'agent is asked for the cheapest dates');
+await say('/cancel'); await tap(`cy:${flexTrip}`);
+
 // error alerts: passing glitches are only logged; repeated ones give one warning; real errors alert at once
 const { reportError } = await import('../src/flow.js');
 const alerts = () => sent.filter((x) => /Bot (error|warning)/.test(x.p.text || '')).length;
