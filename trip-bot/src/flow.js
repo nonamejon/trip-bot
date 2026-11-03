@@ -13,9 +13,10 @@ import {
   getLang, setLang, strings, getMode, setMode, clearMode, logChat, recentChat,
 } from './util.js';
 import { tg, tgUpload, send, typing, whileTyping, kb, replyKb, download } from './telegram.js';
-import { parseRequest, parseOffers, transcribe, routeMessage, parseWhen } from './gemini.js';
+import { parseRequest, parseOffers, transcribe, routeMessage, parseWhen, parseTicket } from './gemini.js';
 import { toAgent, openAgentThread, mirror, isMock, isSearch } from './agent.js';
-import { queueSearch, googleFlightsUrl, bookingComUrl, safeUrl } from './search.js';
+import { queueSearch, bookingComUrl, safeUrl } from './search.js';
+import { aviasalesUrl } from './aviasales.js';
 import { tripIcs } from './files.js';
 import { O, AL, agentLang, PICK_TEXT, PICK_BUTTONS, COMMANDS, KB_TRIPS, KB_SEC } from './i18n.js';
 import { secMenu, addEvent, addReminder, showAgenda, listReminders, doTranslate, doLetter, doRevise, handleSecCallback } from './secretary.js';
@@ -24,7 +25,7 @@ import { secMenu, addEvent, addReminder, showAgenda, listReminders, doTranslate,
 // Baggage is never asked: the agent states the allowance of each fare.
 const hardMissing = (f) => [!f.destination && 'destination', !f.date_from && !f.date_flex && 'date_from'].filter(Boolean);
 const softMissing = (f) => [!f.travelers && 'travelers', f.date_from && !f.date_to && !f.one_way && !f.date_flex && 'date_to'].filter(Boolean);
-const FIELD_KEYS = ['origin', 'destination', 'date_from', 'date_to', 'one_way', 'date_flex', 'travelers', 'traveler_names', 'flight_pref', 'baggage', 'hotel', 'budget', 'notes'];
+const FIELD_KEYS = ['origin', 'destination', 'date_from', 'date_to', 'one_way', 'date_flex', 'window_from', 'window_to', 'origin_iata', 'destination_iata', 'travelers', 'traveler_names', 'flight_pref', 'baggage', 'hotel', 'budget', 'notes'];
 // "12-noyabr – 15-noyabr (3 kecha)", "15-noyabr (bir tomonga)", plus the flexibility if any
 const datesLine = (S, f, lang, Q = '?') => {
   if (f.date_flex && !f.date_from) return `${f.date_flex} (${S.flexible})`; // no invented exact date
@@ -105,7 +106,7 @@ function draftText(L, lang, t) {
   ].filter((x) => x !== null).join('\n');
 }
 
-function compareText(L, lang, t) {
+function compareText(env, L, lang, t) {
   const out = [`<b>${L.nOptions(t.offers.length)} · ${esc(t.fields.destination)}</b> · ${t.code}`];
   t.offers.forEach((o, i) => {
     out.push('', `<b>${esc(o.label)}</b> · ${esc(money(o, lang))}${i === t.recommended ? ` · <u>${L.recommended}</u>` : ''}`,
@@ -114,23 +115,25 @@ function compareText(L, lang, t) {
       `${L.hotel}: ${esc([o.hotel, o.distance].filter(Boolean).join(' · ') || L.notStated)}`,
       o.baggage ? `${L.baggage}: ${esc(o.baggage)}` : null,
       `${L.cancellation}: ${esc(refundWord(o.refund, lang))}${o.refund_note ? ` (${esc(o.refund_note)})` : ''}`,
-      linksLine(L, t, o));
+      linksLine(env, L, t, o));
   });
   if (t.recommended != null && t.reason && t.offers[t.recommended]) out.push('', `<i>${L.why(esc(t.offers[t.recommended].label))}: ${esc(t.reason)}</i>`);
-  if (t.offers.some((o) => o.flight_link || o.date_out)) out.push('', `<i>${L.pricesApprox}</i>`);
+  if (t.offers.some((o) => o.flight_link || o.date_out)) out.push('', `<i>${t.fields.price_source === 'aviasales' ? L.pricesAviasales : L.pricesApprox}</i>`);
   return out.filter((x) => x !== null).join('\n');
 }
 
-// Booking links of an option: airline page, live Google Flights search, hotel page, Booking.com search.
-function optionLinks(L, t, o) {
+// Booking links of an option: Aviasales (that fare, or a search for its dates), the airline's page, the hotel, Booking.com.
+function optionLinks(env, L, t, o) {
+  const flight = safeUrl(o.flight_link);
+  const avia = flight && /aviasales\./.test(flight) ? flight : aviasalesUrl(env, t.fields, o);
   return [
-    [L.linkAirline, safeUrl(o.flight_link)], ['Google Flights', googleFlightsUrl(t.fields, o)],
+    ['Aviasales', avia], [L.linkAirline, flight && flight !== avia ? flight : null],
     [L.linkHotel, safeUrl(o.hotel_link)], ['Booking.com', o.hotel ? bookingComUrl(t.fields, o) : null],
   ].filter(([, u]) => u);
 }
 const href = (u) => u.replace(/&/g, '&amp;').replace(/"/g, '&quot;');
-function linksLine(L, t, o) {
-  const links = optionLinks(L, t, o);
+function linksLine(env, L, t, o) {
+  const links = optionLinks(env, L, t, o);
   return links.length ? '🔗 ' + links.map(([name, u]) => `<a href="${href(u)}">${esc(name)}</a>`).join(' · ') : null;
 }
 
@@ -268,15 +271,20 @@ export async function handleOwnerMessage(env, msg) {
       return noteToAgent(env, msg, tn, chat, L, said, media);
     }
     case 'trip_docs': {
-      const row = await one(env, `SELECT id FROM trips WHERE owner_id = ? AND status IN ('chosen', 'booked', 'offers', 'sent') ORDER BY id DESC LIMIT 1`, uid);
+      // His ticket / booking / boarding pass: keep it, read the real flights, set reminders from them.
       const file = msg.document || msg.photo?.[msg.photo.length - 1];
-      if (!row || !file) return send(env, chat, esc(r.reply || L.chatFallback), mainKb(L));
-      const td = await getTrip(env, row.id);
+      if (!file) return send(env, chat, esc(r.reply || L.chatFallback), mainKb(L));
+      let tk = null;
+      if (media.length) {
+        try { tk = await whileTyping(env, chat, () => parseTicket(env, media, lang)); } catch (e) { await reportError(env, e, 'parseTicket'); }
+      }
+      const row = await one(env, `SELECT id FROM trips WHERE owner_id = ? AND status IN ('chosen', 'booked', 'offers', 'sent') ORDER BY id DESC LIMIT 1`, uid);
+      let td = row && (await getTrip(env, row.id));
+      if (!td && tk?.is_ticket && tk.flights?.some((x) => isDateTime(x.departure_local))) td = await tripFromTicket(env, uid, tk, L); // booked elsewhere
+      if (!td) return send(env, chat, L.ticketNoTrip);
       await run(env, 'INSERT INTO documents (trip_id, name, file_id, created_at) VALUES (?, ?, ?, ?)', td.id, msg.document?.file_name || 'photo.jpg', file.file_id, Date.now());
-      await logEvent(env, 'owner', 'documents', td.id, msg.document?.file_name || 'photo');
-      await send(env, chat, L.docSaved(td.code));
-      if (td.status === 'chosen') return finishBooking(env, td);
-      return;
+      await logEvent(env, 'owner', 'documents', td.id, { file: msg.document?.file_name || 'photo', ticket: tk });
+      return applyTicket(env, td, tk, L, lang, chat);
     }
     case 'trip_status': return send(env, chat, t ? statusText(env, L, lang, t) : L.noTripTell);
     case 'trip_cancel':
@@ -406,7 +414,7 @@ async function tripCard(env, chat, L, lang, t) {
 function offersMessage(env, t, L, lang) {
   const rows = t.offers.map((o, i) => [[`${i === t.recommended ? '★ ' : ''}${o.label} · ${money(o, lang)}`, `ch:${t.id}:${i}`]]);
   rows.push([[L.btnOther, `ot:${t.id}`]]);
-  return send(env, t.owner_id, compareText(L, lang, t), kb(rows));
+  return send(env, t.owner_id, compareText(env, L, lang, t), kb(rows));
 }
 
 // heardText: transcript of a voice note, when the router already made one.
@@ -420,7 +428,8 @@ async function buildRequest(env, uid, chat, t, text, media, L, lang, heardText =
 
   // Take Gemini's values, then drop anything that cannot be right.
   for (const k of FIELD_KEYS) if (r[k] != null && r[k] !== '') t.fields[k] = r[k];
-  for (const k of ['date_from', 'date_to']) if (t.fields[k] && !isDate(t.fields[k])) delete t.fields[k];
+  for (const k of ['date_from', 'date_to', 'window_from', 'window_to']) if (t.fields[k] && !isDate(t.fields[k])) delete t.fields[k];
+  for (const k of ['origin_iata', 'destination_iata']) if (t.fields[k] && !/^[A-Z]{3}$/.test(t.fields[k])) delete t.fields[k];
   if (t.fields.date_from && t.fields.date_to && t.fields.date_to < t.fields.date_from) delete t.fields.date_to;
   if (t.fields.travelers != null && !(Number.isInteger(+t.fields.travelers) && +t.fields.travelers >= 1 && +t.fields.travelers <= 20)) delete t.fields.travelers;
   t.fields.origin ||= L.origin;
@@ -574,7 +583,7 @@ export async function handleCallback(env, cq) {
       case 'tc': return tgUpload(env, 'sendDocument', { chat_id: chat, caption: L.icsCaption }, 'document', `${t.code}.ics`, tripIcs(t, t.offers[t.chosen], L), 'text/calendar');
       case 'tf': await setMode(env, uid, 'flight_time', t.id); return send(env, chat, L.flightTimeAsk);
       case 'tx': return OPEN.includes(t.status) ? askCancel(env, t) : send(env, chat, L.staleBtn);
-      case 'bk': if (t.status !== 'chosen') return send(env, chat, L.staleBtn); await dropKeyboard(); return finishBooking(env, t);
+      case 'bk': if (t.status !== 'chosen') return send(env, chat, L.staleBtn); await dropKeyboard(); return finishBooking(env, t, 'search');
       case 'bl': return t.chosen != null ? bookingLinks(env, t, L) : send(env, chat, L.staleBtn);
       case 'rc': // pick another option
         if (t.status !== 'chosen') return send(env, chat, L.staleBtn);
@@ -771,13 +780,14 @@ export async function handleAgentDocs(env, t, docs, caption = '') {
 // Search mode: the booking links of the chosen option, and "I booked it".
 async function bookingLinks(env, t, L, justChosen = false) {
   const o = t.offers[t.chosen] || {};
-  const rows = optionLinks(L, t, o).map(([name, u]) => [[`🔗 ${name}`, u]]);
+  const rows = optionLinks(env, L, t, o).map(([name, u]) => [[`🔗 ${name}`, u]]);
   if (t.status === 'chosen') rows.push([[L.btnBooked, `bk:${t.id}`]], [[L.btnPickOther, `rc:${t.id}`]]);
   return send(env, t.owner_id, `${justChosen ? L.chosenSearch(esc(o.label)) : `<b>${esc(o.label)}</b> · ${t.code}`}\n${L.bookHint}`, kb(rows));
 }
 
 // The trip is booked: flight reminders, the summary and the calendar file.
-async function finishBooking(env, t) {
+// source: 'agent' (the agent's documents), 'search' (he tapped "booked"; times come from the search), 'ticket' (read from his ticket)
+async function finishBooking(env, t, source = 'agent') {
   const { lang, L } = await strings(env, t.owner_id);
   const o = t.offers[t.chosen] || {};
   // Flexible dates become the dates of the chosen option.
@@ -788,9 +798,64 @@ async function finishBooking(env, t) {
   t.done_at = back != null ? back + DAY : null;
   await setStatus(env, t, 'booked', 'agent');
   await scheduleFlightReminders(env, t);
-  await send(env, t.owner_id, await tripText(env, L, lang, t), t.flight_at ? {} : kb([[[L.btnFlightTime, `tf:${t.id}`]]]));
+  const timeHint = source === 'search' && t.flight_at ? `\n\n${L.checkTimeHint}` : '';
+  await send(env, t.owner_id, (await tripText(env, L, lang, t)) + timeHint, kb([[[t.flight_at ? L.btnChangeTime : L.btnFlightTime, `tf:${t.id}`]]]));
   await tgUpload(env, 'sendDocument', { chat_id: t.owner_id, caption: L.icsCaption }, 'document', `${t.code}.ics`, tripIcs(t, o, L), 'text/calendar')
     .catch((e) => reportError(env, e, 'send ics'));
+}
+
+// ======================= tickets =======================
+
+const isDateTime = (s) => /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(s || '');
+
+// A ticket for a trip the bot does not know (booked elsewhere): create the trip from it.
+async function tripFromTicket(env, uid, tk, L) {
+  const fl = tk.flights.filter((x) => isDateTime(x.departure_local));
+  const first = fl[0], back = fl.length > 1 && fl.at(-1).to_iata && fl.at(-1).to_iata === first.from_iata ? fl.at(-1) : null;
+  const out = back ? fl[fl.indexOf(back) - 1] || first : fl.at(-1);
+  const t = await createTrip(env, uid);
+  t.fields = {
+    origin: first.from_city || L.origin, destination: out.to_city || first.to_city, origin_iata: first.from_iata || null, destination_iata: out.to_iata || null,
+    date_from: first.departure_local.slice(0, 10), date_to: back ? back.departure_local.slice(0, 10) : null, one_way: !back, travelers: 1, notes: tk.booking_ref ? `Bron: ${tk.booking_ref}` : null,
+  };
+  t.offers = [{ label: first.flight_number || first.airline || 'Ticket', airline: [first.airline, first.flight_number].filter(Boolean).join(' '), refund: 'unknown' }];
+  t.chosen = 0;
+  await setStatus(env, t, 'chosen', 'owner');
+  await logEvent(env, 'owner', 'trip_from_ticket', t.id);
+  return t;
+}
+
+// Use the ticket's real flights for the booking: departure time, reminders, return date; then confirm.
+async function applyTicket(env, t, tk, L, lang, chat) {
+  const fl = (tk?.is_ticket && tk.flights || []).filter((x) => isDateTime(x.departure_local));
+  if (!fl.length) {
+    await send(env, chat, `${L.docSaved(t.code)}\n${L.ticketNoTime}`, kb([[[L.btnFlightTime, `tf:${t.id}`]]]));
+    return t.status === 'chosen' ? finishBooking(env, t, 'search') : undefined;
+  }
+  const first = fl[0];
+  const back = fl.length > 1 && fl.at(-1).to_iata && fl.at(-1).to_iata === first.from_iata ? fl.at(-1) : null;
+  if (t.chosen == null || !t.offers[t.chosen]) { // he booked something else than the options: take the ticket as the choice
+    t.offers.push({ label: first.flight_number || first.airline || 'Ticket', airline: first.airline, refund: 'unknown' });
+    t.chosen = t.offers.length - 1;
+  }
+  const o = t.offers[t.chosen];
+  o.outbound_datetime = first.departure_local.slice(0, 16);
+  o.outbound = `${first.departure_local.slice(11, 16)}${isDateTime(first.arrival_local) ? ' → ' + first.arrival_local.slice(11, 16) : ''}`;
+  o.airline = [first.airline, first.flight_number].filter(Boolean).join(' ') || o.airline;
+  o.date_out = first.departure_local.slice(0, 10);
+  if (back) { o.date_back = back.departure_local.slice(0, 10); o.return = `${dshort(o.date_back, lang)} ${back.departure_local.slice(11, 16)}`; t.fields.date_to = o.date_back; }
+  t.fields.date_from = o.date_out;
+  const line = L.ticketRead(esc(first.flight_number || first.airline || ''), fmtLocal(env, localToUtc(env, o.outbound_datetime), lang));
+  if (t.status === 'booked') { // already booked: correct the time and the reminders
+    t.flight_at = localToUtc(env, o.outbound_datetime);
+    await saveTrip(env, t);
+    await run(env, 'DELETE FROM reminders WHERE trip_id = ? AND sent_at IS NULL', t.id);
+    await scheduleFlightReminders(env, t);
+    return send(env, chat, line);
+  }
+  await saveTrip(env, t);
+  await send(env, chat, line);
+  return finishBooking(env, t, 'ticket');
 }
 
 // ======================= scheduled checks (cron) =======================
@@ -841,6 +906,13 @@ export async function runChecks(env) {
     await send(env, t.owner_id, L.welcomeBack(esc(t.fields.destination), t.code));
   }
 
+  // Watchdog: an owner message still unfinished after 2 minutes was cut off (time limit). Say so; alert the maintainer.
+  for (const u of await all(env, 'SELECT * FROM updates WHERE chat_id IS NOT NULL AND done_at IS NULL AND apologized = 0 AND ts < ? AND ts > ?', now - 2 * MIN, now - DAY)) {
+    await run(env, 'UPDATE updates SET apologized = 1 WHERE update_id = ?', u.update_id);
+    const { L } = await strings(env, u.chat_id);
+    await send(env, u.chat_id, L.sorryLost).catch(() => {});
+    await reportError(env, new Error(`message not answered: update ${u.update_id} never finished (cut off by a time limit?)`), 'watchdog');
+  }
   await run(env, 'DELETE FROM updates WHERE ts < ?', now - 2 * DAY);
   await run(env, 'DELETE FROM chat_log WHERE ts < ?', now - 30 * DAY);
 }

@@ -5,7 +5,8 @@
   "scripts": {
     "deploy": "wrangler deploy",
     "test": "node test/run.mjs",
-    "test:live": "node test/live.mjs"
+    "test:live": "node test/live.mjs",
+    "eval": "node test/eval.mjs"
   },
   "devDependencies": {
     "better-sqlite3": "^11.0.0",

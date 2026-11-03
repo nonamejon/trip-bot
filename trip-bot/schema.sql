@@ -133,6 +133,9 @@ CREATE TABLE IF NOT EXISTS events (
 
 -- Telegram retries a webhook it thinks failed; this stops double handling
 CREATE TABLE IF NOT EXISTS updates (
-  update_id INTEGER PRIMARY KEY,
-  ts        INTEGER NOT NULL
+  update_id  INTEGER PRIMARY KEY,
+  ts         INTEGER NOT NULL,
+  chat_id    INTEGER,                             -- the owner's chat, for the "never silent" watchdog
+  done_at    INTEGER,                             -- set when handling finished (with or without an error)
+  apologized INTEGER NOT NULL DEFAULT 0           -- the watchdog told him it was lost
 );

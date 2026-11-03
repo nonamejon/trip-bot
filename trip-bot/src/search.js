@@ -12,6 +12,7 @@ import { run, getTrip, logEvent, strings, MIN } from './util.js';
 import { gemini } from './gemini.js';
 import { handleAgentText, reportError } from './flow.js';
 import { send, kb } from './telegram.js';
+import { fetchFares } from './aviasales.js';
 
 const isDate = (s) => /^\d{4}-\d{2}-\d{2}$/.test(s || '');
 
@@ -41,7 +42,8 @@ export async function queueSearch(env, t, payload = {}) {
 }
 
 // ---------- the search ----------
-function searchPrompt(env, t, payload) {
+// fares: real Aviasales fares (fetchFares), or [] when the Travelpayouts token is not set.
+function searchPrompt(env, t, payload, fares = []) {
   const f = t.fields;
   const today = new Date(Date.now() + (Number(env.TZ_OFFSET_MIN) || 0) * 60e3).toISOString().slice(0, 10);
   const wantsHotel = !f.one_way && !/mehmonxona kerak emas|отель не нужен|no hotel/i.test(`${f.hotel || ''} ${f.notes || ''}`);
@@ -51,7 +53,9 @@ The request (JSON): ${JSON.stringify({ from: f.origin, to: f.destination, date_f
 ${payload.note ? `His new wish: """${payload.note}"""` : ''}
 ${payload.previous ? `He has seen these options and wants different ones: ${payload.previous}` : ''}
 
-Write 3 options numbered 1) 2) 3), making them differ (the cheapest, the best timing, the most comfortable). For each option:
+${fares.length ? `Real fares found on Aviasales for this request (JSON; prices in USD for all travelers, times local): ${JSON.stringify(fares)}
+Build the 3 flight options from these fares: use exactly their flights, times and prices, and give each fare's "link" as its booking URL. Use Google Search only to add details (airline name, baggage allowance, fare rules) and the hotels.
+` : ''}Write 3 options numbered 1) 2) 3), making them differ (the cheapest, the best timing, the most comfortable). For each option:
 - airline and flight numbers; exact dates and local departure and arrival times for the outbound${f.one_way ? '' : ' and the return'} flight; direct, or where the connection is;
 - the baggage allowance of that fare;
 - the approximate total price in USD for all travelers${wantsHotel ? ', flights and hotel separately' : ''} (say it is approximate);
@@ -68,11 +72,14 @@ export async function runSearch(env, job) {
   if (!t || t.status !== 'sent') return;
   const payload = JSON.parse(job.payload || '{}');
   try {
-    const text = await gemini(env, { prompt: searchPrompt(env, t, payload), tools: [{ google_search: {} }], temperature: 0.3, timeoutMs: 90000 });
+    let fares = [];
+    try { fares = await fetchFares(env, t.fields); } catch (e) { await reportError(env, e, 'aviasales'); }
+    t.fields.price_source = fares.length ? 'aviasales' : 'web';
+    const text = await gemini(env, { prompt: searchPrompt(env, t, payload, fares), tools: [{ google_search: {} }], temperature: 0.3, timeoutMs: 90000 });
     await logEvent(env, 'bot', 'search_done', t.id, text.slice(0, 300));
     t.agent_texts = []; // only this search's results are parsed
     await run(env, 'UPDATE trips SET agent_texts = ? WHERE id = ?', '[]', t.id);
-    await handleAgentText(env, { ...t, agent_texts: [] }, text, []);
+    await handleAgentText(env, { ...t, agent_texts: [] }, text, []); // saves t.fields (price_source) with the offers
   } catch (e) {
     await reportError(env, e, 'search');
     const attempt = (payload.attempt || 0) + 1;

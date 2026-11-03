@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import worker from '../src/index.js';
 import { tinyPdf } from '../src/files.js';
 import { nextDue } from '../src/secretary.js';
+import { aviasalesUrl, fetchFares } from '../src/aviasales.js';
 import { checkTelegram } from './telegram-rules.mjs';
 
 // ---------- fake clock ----------
@@ -31,7 +32,8 @@ const env = {
 };
 
 // ---------- fake Telegram + Gemini ----------
-let lastGeminiMime = null, lastParsePrompt = '', lastSearchPrompt = '', failSearch = 0;
+let lastGeminiMime = null, lastParsePrompt = '', lastSearchPrompt = '', failSearch = 0, lastFaresQuery = null;
+let ticketDepart = '2026-11-12T09:15', ticketBack = '2026-11-15T21:05';
 let msgId = 100, offersRound = 0, failNextGemini = false;
 const sent = [];
 const geminiCalls = [];
@@ -47,7 +49,13 @@ globalThis.fetch = async (url, init = {}) => {
     const hasMedia = body.contents[0].parts.length > 1;
     if (hasMedia) lastGeminiMime = body.contents[0].parts[1].inline_data.mime_type;
     let out;
-    if (prompt.startsWith('You are a travel agent in Tashkent searching')) {
+    if (prompt.startsWith('Read the attached document')) {
+      geminiCalls.push('parseTicket');
+      out = { is_ticket: true, booking_ref: 'ABC123', flights: [
+        { flight_number: 'TK 371', airline: 'Turkish Airlines', from_city: 'Toshkent', from_iata: 'TAS', to_city: 'Istanbul', to_iata: 'IST', departure_local: ticketDepart, arrival_local: ticketDepart.slice(0, 11) + '12:30' },
+        { flight_number: 'TK 370', airline: 'Turkish Airlines', from_city: 'Istanbul', from_iata: 'IST', to_city: 'Toshkent', to_iata: 'TAS', departure_local: ticketBack, arrival_local: null },
+      ] };
+    } else if (prompt.startsWith('You are a travel agent in Tashkent searching')) {
       geminiCalls.push('search' + (body.tools ? '+google' : ''));
       lastSearchPrompt = prompt;
       if (failSearch > 0) { failSearch--; return new Response('{"error":{"code":400,"message":"search failed"}}', { status: 400 }); }
@@ -75,7 +83,7 @@ globalThis.fetch = async (url, init = {}) => {
         ? { destination: 'Guanchjou', origin: 'Toshkent', date_flex: 'noyabr oʻrtalari, borib-kelish eng arzon kunlarda', travelers: null }
         : /Dubai/.test(nm)
         ? { destination: 'Dubai', origin: 'Tashkent', travelers: /45/.test(nm) ? 45 : null }
-        : { transcript: hasMedia ? "Istanbulga 12-noyabr ertalab uchishim kerak, 3 kunga." : null, origin: 'Tashkent', destination: 'Istanbul', date_from: '2026-11-12', date_to: '2026-11-15', travelers: 1, flight_pref: 'morning, direct', baggage: /kg/.test(nm) ? '23 kg' : null, hotel: 'Levent, near the meeting', budget: null, notes: null };
+        : { transcript: hasMedia ? "Istanbulga 12-noyabr ertalab uchishim kerak, 3 kunga." : null, origin: 'Tashkent', destination: 'Istanbul', origin_iata: 'TAS', destination_iata: 'IST', date_from: '2026-11-12', date_to: '2026-11-15', travelers: 1, flight_pref: 'morning, direct', baggage: /kg/.test(nm) ? '23 kg' : null, hotel: 'Levent, near the meeting', budget: null, notes: null };
     } else if (prompt.startsWith('You are a travel agent in Tashkent. Today')) {
       geminiCalls.push('mockAgentOffers');
       out = '1) HY 271 12.11 07:40-10:55 direct... 1450 USD free cancel\n2) TK 371 ... 1120 USD\n3) PC via Ankara ... 890 USD non-refundable';
@@ -100,6 +108,13 @@ globalThis.fetch = async (url, init = {}) => {
     } else throw new Error('Unexpected Gemini prompt: ' + prompt.slice(0, 80));
     const text = typeof out === 'string' ? out : JSON.stringify(out);
     return new Response(JSON.stringify({ candidates: [{ content: { parts: [{ text }] } }] }));
+  }
+  if (url.startsWith('https://api.travelpayouts.com/aviasales/v3/prices_for_dates')) {
+    lastFaresQuery = new URL(url).searchParams;
+    return new Response(JSON.stringify({ success: true, data: [
+      { origin: 'TAS', destination: 'IST', price: 412, airline: 'HY', flight_number: '271', departure_at: '2026-11-12T07:40:00+05:00', return_at: '2026-11-15T12:30:00+03:00', transfers: 0, return_transfers: 0, duration_to: 320, link: '/search/TAS1211IST15111?t=HY1' },
+      { origin: 'TAS', destination: 'IST', price: 380, airline: 'C6', flight_number: '301', departure_at: '2026-11-25T05:05:00+05:00', return_at: '2026-11-28T10:00:00+03:00', transfers: 0, return_transfers: 0, duration_to: 335, link: '/search/TAS2511IST28111?t=C61' },
+    ] }));
   }
   if (url.startsWith('https://api.telegram.org/file/')) return new Response(new Uint8Array([79, 103, 103, 83, 0, 1, 2, 3]));
   if (url.startsWith('https://api.telegram.org/bot')) {
@@ -135,6 +150,7 @@ function fakeRoute(prompt, hasMedia) {
   if (pending && /juma/.test(pending)) return { intent: 'event', ev_title: 'Uchrashuv', ev_date: localISO(4), ev_time: '10:00' };
   if (/agentga|arzonroq/.test(m)) return { intent: 'trip_note' };
   if (/chiptam/.test(m)) return { intent: 'trip_docs' };
+  if (/xatoga/.test(m)) return { intent: 'chat', reply: 'x' };
   if (/cancel|отмен/.test(m)) return { intent: 'trip_cancel' };
   if (/status/.test(m)) return { intent: 'trip_status' };
   if (/juma kuni uchrashuv/.test(m)) return { intent: 'event', ev_title: 'Uchrashuv', ev_date: localISO(4), question: 'Uchrashuv soat nechada boʻladi?' };
@@ -425,19 +441,24 @@ await say('/passport');
 assert(!/agent/i.test(lastText()), 'search mode: passport instructions do not mention an agent');
 await say('Istanbul again please, same as before, 23 kg');
 const sTrip = status().id;
+env.TRAVELPAYOUTS_TOKEN = 'tp-test'; env.TRAVELPAYOUTS_MARKER = '12345';
 await tap(`ap:${sTrip}`); show('search mode: approve');
 assert(sent.filter((x) => x.method === 'sendMessage').at(-2).p.reply_markup.inline_keyboard[0][0].text === 'Tasdiqlash va qidirish', 'search mode: the card says approve and search');
 assert(lastText().startsWith('🔎') && sqlite.prepare(`SELECT COUNT(*) c FROM jobs WHERE kind = 'search_offers' AND trip_id = ? AND done_at IS NULL`).get(sTrip).c === 1, 'approve queues a search, not a message to an agent');
 await cron(); show('cron: search');
 assert(geminiCalls.includes('search+google') && status().status === 'offers', 'search runs with Google Search and shows options (no clarification round)');
-assert(lastText().includes('google.com/travel/flights') && lastText().includes('uzairways.com') && lastText().includes('booking.com') && lastText().includes('ℹ️'), 'options link to the airline, Google Flights, the hotel and Booking.com; prices marked approximate');
+assert(lastText().includes('aviasales.uz/search/TAS1212IST15121?marker=12345') && lastText().includes('uzairways.com') && lastText().includes('booking.com') && !lastText().includes('google.com'), 'options link to Aviasales (with the affiliate marker), the airline, the hotel and Booking.com');
+assert(lastSearchPrompt.includes('Real fares found on Aviasales') && lastSearchPrompt.includes('"price":412') && lastFaresQuery.get('origin') === 'TAS' && lastFaresQuery.get('destination') === 'IST' && lastFaresQuery.get('return_at') === '2026-11-15', 'with a Travelpayouts token the search is built from real Aviasales fares');
+assert(lastText().includes('Aviasales’dan'), 'the card says the prices come from Aviasales');
+delete env.TRAVELPAYOUTS_TOKEN; delete env.TRAVELPAYOUTS_MARKER;
 assert(!sent.slice(-6).some((x) => (x.p.text || '').includes('Bot → agent')), 'nothing is mirrored to an agent');
 assert(lastText().includes('ss=Levent%2C+Istanbul'), 'hotel search uses the area he wants, in English');
 await tap(`ch:${sTrip}:0`); show('search mode: choose');
-assert(status().status === 'chosen' && lastKb().includes('"url":"https://www.google.com/travel/flights') && lastKb().includes(`bk:${sTrip}`), 'choosing shows booking links and "I booked it"');
+assert(status().status === 'chosen' && lastKb().includes('"url":"https://www.aviasales.uz/search/TAS1212IST15121') && lastKb().includes(`bk:${sTrip}`), 'choosing shows booking links (Aviasales first) and "I booked it"');
 n0 = sent.length;
 await tap(`bk:${sTrip}`); show('search mode: booked');
 assert(status().status === 'booked' && sent.slice(n0).some((x) => x.method === 'sendDocument' && /text\/calendar/.test(x.p.document)), '"I booked it" completes the trip with the calendar file');
+assert(sent.slice(n0).some((x) => (x.p.text || '').includes('qidiruvdan olindi') && JSON.stringify(x.p.reply_markup).includes(`tf:${sTrip}`)), 'after "I booked it": the time came from the search, send the ticket or change it');
 assert(JSON.parse(sqlite.prepare('SELECT fields FROM trips WHERE id = ?').get(sTrip).fields).date_from === '2026-11-12', 'dates kept');
 await tap(`tv:${sTrip}`);
 assert(lastKb().includes(`bl:${sTrip}`) && !lastKb().includes('aw:'), 'card: booking links, no "write to agent"');
@@ -458,7 +479,34 @@ await tap(`ch:${sTrip2}:1`);
 await update({ message: { message_id: ++msgId, from: owner, chat: { id: 111, type: 'private' }, caption: 'chiptam', document: { file_id: 'TICKET1', file_name: 'ticket.pdf', mime_type: 'application/pdf', file_size: 30000 } } });
 show('his ticket');
 assert(status().status === 'booked' && sqlite.prepare('SELECT COUNT(*) c FROM documents WHERE trip_id = ?').get(sTrip2).c === 1, 'sending the ticket saves it and completes the booking');
+const tk2 = sqlite.prepare('SELECT * FROM trips WHERE id = ?').get(sTrip2);
+assert(tk2.flight_at === Date.UTC(2026, 10, 12, 4, 15) && JSON.parse(tk2.fields).date_to === '2026-11-15' && sent.some((x) => (x.p.text || '').includes('Chiptadan oʻqidim: <b>TK 371</b>')), 'the real flight time is read from the ticket and used for reminders');
+// a ticket for a trip booked elsewhere: the bot creates the trip from it
+sqlite.prepare(`UPDATE trips SET status = 'done' WHERE status IN ('booked', 'chosen', 'offers', 'sent')`).run();
+ticketDepart = '2026-12-20T08:00'; ticketBack = '2026-12-27T19:00';
+await update({ message: { message_id: ++msgId, from: owner, chat: { id: 111, type: 'private' }, caption: 'chiptam', photo: [{ file_id: 'TICKETPHOTO', file_size: 80000, width: 900, height: 1200 }] } });
+show('ticket for an unknown trip');
+const fromTicket = sqlite.prepare('SELECT * FROM trips ORDER BY id DESC').get();
+assert(fromTicket.status === 'booked' && fromTicket.flight_at === Date.UTC(2026, 11, 20, 3, 0) && JSON.parse(fromTicket.fields).destination === 'Istanbul' && sqlite.prepare('SELECT COUNT(*) c FROM reminders WHERE trip_id = ?').get(fromTicket.id).c === 2, 'a ticket for a trip booked elsewhere becomes a booked trip with reminders');
 env.AGENT_MODE = 'mock';
+
+// never silent: an error gives an apology at once; a cut-off message is caught by the watchdog
+sqlite.exec('ALTER TABLE chat_log RENAME TO chat_log_off');
+await say('bu xabar xatoga uchraydi');
+sqlite.exec('ALTER TABLE chat_log_off RENAME TO chat_log');
+assert(lastText().startsWith('Kechirasiz, xabaringizni qayta ishlashda xatolik'), 'an unexpected error: he gets an apology, not silence');
+sqlite.prepare('INSERT INTO updates (update_id, ts, chat_id) VALUES (?, ?, ?)').run(999001, Date.now() - 3 * 60e3, 111);
+await cron(); show('watchdog');
+assert(sent.some((x) => (x.p.text || '').startsWith('Kechirasiz, oxirgi xabaringizga javob bera olmadim')) && sqlite.prepare('SELECT apologized FROM updates WHERE update_id = 999001').get().apologized === 1, 'a message cut off mid-way: the watchdog apologizes (once)');
+await cron();
+assert(sent.filter((x) => (x.p.text || '').startsWith('Kechirasiz, oxirgi')).length === 1, 'the watchdog apologizes only once');
+
+// Aviasales link and fares
+assert(aviasalesUrl({}, { origin_iata: 'TAS', destination_iata: 'IST', date_from: '2026-11-12', date_to: '2026-11-15', travelers: 1 }) === 'https://www.aviasales.uz/search/TAS1211IST15111', 'Aviasales search link format');
+assert(aviasalesUrl({}, { destination_iata: 'DXB', date_from: '2026-12-01', one_way: true, travelers: 2 }) === 'https://www.aviasales.uz/search/TAS0112DXB2', 'Aviasales one-way link for 2 adults');
+const flexFares = await fetchFares({ TRAVELPAYOUTS_TOKEN: 't' }, { origin_iata: 'TAS', destination_iata: 'IST', date_flex: 'noyabr oʻrtalari', window_from: '2026-11-10', window_to: '2026-11-20' });
+assert(lastFaresQuery.get('departure_at') === '2026-11' && flexFares.length === 1 && flexFares[0].price === 412 && flexFares[0].link === 'https://www.aviasales.uz/search/TAS1211IST15111?t=HY1', 'flexible dates: month search, kept to his window');
+assert((await fetchFares({}, { destination_iata: 'IST', date_from: '2026-11-12' })).length === 0, 'no token: no fare lookup');
 
 // error alerts: passing glitches are only logged; repeated ones give one warning; real errors alert at once
 const { reportError } = await import('../src/flow.js');

@@ -446,3 +446,29 @@ O.ru.search = {
   baggageByFare: 'по тарифу (указан в каждом варианте)',
   askOptional: (list) => `Если знаете, напишите: ${list}. Если нет — отправляйте так.`,
 };
+
+// Prices from Aviasales (Travelpayouts token set)
+O.uz.pricesAviasales = 'ℹ️ Reys narxlari Aviasales’dan (soʻnggi qidiruvlar asosida). Aniq narx — havolada.';
+O.ru.pricesAviasales = 'ℹ️ Цены на рейсы — с Aviasales (по недавним поискам). Точная цена — по ссылке.';
+
+// Tickets
+Object.assign(O.uz, {
+  ticketRead: (flight, when) => `✈️ Chiptadan oʻqidim: <b>${flight}</b>, ${when}. Eslatmalar shu vaqtga qoʻyiladi.`,
+  ticketNoTime: 'Undan reys vaqtini oʻqiy olmadim — vaqtni tugma orqali kiriting.',
+  ticketNoTrip: 'Bu hujjat qaysi safarga tegishli ekanini tushunmadim. Chiptani aniqroq rasm yoki PDF qilib yuboring.',
+  checkTimeHint: 'ℹ️ Reys vaqti qidiruvdan olindi. Chiptangizni yuborsangiz, aniq vaqtni oʻqib olaman.',
+  btnChangeTime: '🕒 Vaqtni oʻzgartirish',
+});
+Object.assign(O.ru, {
+  ticketRead: (flight, when) => `✈️ Прочитал из билета: <b>${flight}</b>, ${when}. Напоминания будут на это время.`,
+  ticketNoTime: 'Не смог прочитать время рейса — укажите его кнопкой.',
+  ticketNoTrip: 'Не понял, к какой поездке относится документ. Пришлите билет более чётким фото или PDF.',
+  checkTimeHint: 'ℹ️ Время рейса взято из поиска. Пришлите билет — прочитаю точное время.',
+  btnChangeTime: '🕒 Изменить время',
+});
+
+// Never silent
+O.uz.sorryError = 'Kechirasiz, xabaringizni qayta ishlashda xatolik boʻldi. Iltimos, yana bir bor yuboring.';
+O.ru.sorryError = 'Извините, при обработке сообщения произошла ошибка. Пожалуйста, отправьте его ещё раз.';
+O.uz.sorryLost = 'Kechirasiz, oxirgi xabaringizga javob bera olmadim (juda uzoq davom etdi). Iltimos, yana bir bor yuboring.';
+O.ru.sorryLost = 'Извините, не успел ответить на ваше последнее сообщение (обработка заняла слишком долго). Пожалуйста, отправьте его ещё раз.';

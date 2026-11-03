@@ -4,12 +4,12 @@
 //   GET  /cal/<token>.ics  the owner's calendar, for subscribing from a phone (link comes from the bot)
 //   cron (every minute)    mock agent replies, trip checks, secretary reminders and the morning brief
 
-import { run, esc } from './util.js';
+import { run, esc, strings } from './util.js';
 import { COMMANDS, STRANGER, AL } from './i18n.js';
 import { tg, send } from './telegram.js';
 import { handleOwnerMessage, handleCallback, handleAgentMessage, runChecks, reportError, adminIds } from './flow.js';
 import { runJobs } from './mock.js';
-import { isMock } from './agent.js';
+import { agentMode } from './agent.js';
 import { calendarFeed, secretaryChecks } from './secretary.js';
 
 export default {
@@ -24,7 +24,16 @@ export default {
       // Work on the update while Telegram waits, up to 25 s; if it takes longer, answer Telegram and finish in the
       // background (waitUntil gives about 30 s more). Slow Gemini steps get ~55 s in total this way.
       // A retried delivery of the same update is ignored (updates table).
-      const work = handleUpdate(env, update).catch((e) => reportError(env, e, 'update ' + update.update_id));
+      // Never silent: if handling fails, the owner gets an apology at once; if it is cut off (time limit), the cron
+      // watchdog (flow.runChecks) notices the unfinished update and apologizes.
+      const work = handleUpdate(env, update)
+        .then(() => true, async (e) => {
+          if (e.duplicate) return false; // a repeated delivery of an update already being handled
+          await reportError(env, e, 'update ' + update.update_id);
+          await apologize(env, update);
+          return true;
+        })
+        .then((mine) => mine && run(env, 'UPDATE updates SET done_at = ? WHERE update_id = ?', Date.now(), update.update_id).catch(() => {}));
       ctx.waitUntil(work);
       await Promise.race([work, new Promise((res) => setTimeout(res, 25000))]);
       return new Response('ok');
@@ -64,8 +73,10 @@ export default {
 
 async function handleUpdate(env, update) {
   // Telegram may deliver the same update twice; handle each one once.
-  const ins = await run(env, 'INSERT OR IGNORE INTO updates (update_id, ts) VALUES (?, ?)', update.update_id, Date.now());
-  if (!ins.meta?.changes) return;
+  const chat = update.message?.chat?.id ?? update.callback_query?.message?.chat?.id;
+  const ownerChat = chat != null && String(chat) === String(env.OWNER_ID) ? chat : null;
+  const ins = await run(env, 'INSERT OR IGNORE INTO updates (update_id, ts, chat_id) VALUES (?, ?, ?)', update.update_id, Date.now(), ownerChat);
+  if (!ins.meta?.changes) throw Object.assign(new Error('duplicate'), { duplicate: true });
 
   if (update.callback_query) return handleCallback(env, update.callback_query);
 
@@ -80,7 +91,14 @@ async function handleUpdate(env, update) {
     return handleOwnerMessage(env, msg);
   }
 
-  if (!isMock(env) && String(msg.chat.id) === String(env.AGENT_CHAT_ID)) return handleAgentMessage(env, msg);
+  if (agentMode(env) === 'group' && String(msg.chat.id) === String(env.AGENT_CHAT_ID)) return handleAgentMessage(env, msg);
 
   if (msg.text?.startsWith('/chatid')) return send(env, msg.chat.id, AL(env).chatId(esc(msg.chat.id)));
+}
+
+// Tell the owner something went wrong with his message (instead of silence).
+async function apologize(env, update) {
+  const chat = update.message?.chat?.id ?? update.callback_query?.message?.chat?.id;
+  if (chat == null || String(chat) !== String(env.OWNER_ID)) return;
+  try { const { L } = await strings(env, chat); await send(env, chat, L.sorryError); } catch { /* nothing else to do */ }
 }

@@ -72,7 +72,8 @@ const REQUEST_SCHEMA = {
   properties: {
     transcript: S(), origin: S(), destination: S(), date_from: S(), date_to: S(),
     travelers: { type: 'INTEGER', nullable: true }, traveler_names: S(), flight_pref: S(),
-    one_way: { type: 'BOOLEAN', nullable: true }, date_flex: S(),
+    one_way: { type: 'BOOLEAN', nullable: true }, date_flex: S(), window_from: S(), window_to: S(),
+    origin_iata: S(), destination_iata: S(),
     baggage: S(), hotel: S(), budget: S(), notes: S(),
   },
 };
@@ -94,13 +95,15 @@ Return the complete, updated trip request as JSON:
 - origin: where he flies from; "${S.origin}" unless he says otherwise.
 - date_from, date_to: only exact dates he gave; ALWAYS digits "YYYY-MM-DD", even though other values are in ${S.name}. "12-15 noyabr" / "с 12 по 15 ноября" means date_from = the 12th and date_to = the 15th. A length ("3 kunga", "на неделю") counts from date_from. Use the nearest future date.
 - date_flex: if his dates are approximate or he wants the cheapest day ("oyning oʻrtalarida", "arzonroq kuni", "в конце месяца", "±2 kun"), describe it briefly, including the return if it is flexible too (e.g. "noyabr oʻrtalari, borib-kelish eng arzon kunlarda"), and leave date_from/date_to null unless he gave exact dates. Never turn an approximate date into an exact one. Else null.
+- window_from, window_to: when date_flex is set, the earliest departure and latest return dates of that window, "YYYY-MM-DD" ("noyabr oʻrtalari" = about the 10th to the 20th); else null.
+- origin_iata, destination_iata: the 3-letter IATA city code of the origin and destination (TAS, IST, DXB, CAN, MOW...); null if no destination yet.
 - one_way: true if he wants a one-way ticket ("bir tomonga", "в одну сторону", "qaytish kerak emas"); then date_to is null. Otherwise null.
 - travelers: the number of people travelling, ONLY if he says it ("yolgʻiz", "bir kishilik", "1 kishi", "вдвоём", "3 kishi"). Numbers in dates, times, prices or lengths of stay are never the traveler count. null if he has not said.
 - baggage: ONLY what he says ("faqat qoʻl yuki", "1 chamadon", "23 kg"); null if he has not said. Never assume a default and never ask for it.
 - traveler_names, flight_pref (time of day, direct or not, class), hotel (his wishes, short), budget, notes: only what he says.
 - transcript: if there is a voice note, its transcript in the original language; else null.
 Keep earlier values unless he changes or corrects them; a correction always wins. If he complains that a value is wrong, fix that value. Never invent anything. Text values in ${S.name}, using ${S.places}.`;
-  return gemini(env, { prompt, media, schema: REQUEST_SCHEMA });
+  return gemini(env, { prompt, media, schema: REQUEST_SCHEMA, timeoutMs: 30000 });
 }
 
 // ---------- 2. Agent message(s) -> structured options ----------
@@ -270,4 +273,28 @@ export function parseWhen(env, text) {
 Read the date and time in this message (Tashkent time; resolve relative dates from now): """${text}"""
 Return JSON: date "YYYY-MM-DD" or null, time "HH:MM" or null.`;
   return gemini(env, { prompt, schema: { type: 'OBJECT', properties: { date: S(), time: S() } }, thinking: 'low', timeoutMs: 15000 });
+}
+
+// ---------- 8. A ticket, booking confirmation or boarding pass -> the real flights (for reminders) ----------
+const TICKET_SCHEMA = {
+  type: 'OBJECT',
+  properties: {
+    is_ticket: { type: 'BOOLEAN' },
+    booking_ref: S(), passenger: S(),
+    flights: {
+      type: 'ARRAY',
+      items: {
+        type: 'OBJECT',
+        properties: { flight_number: S(), airline: S(), from_city: S(), from_iata: S(), to_city: S(), to_iata: S(), departure_local: S(), arrival_local: S() },
+      },
+    },
+    hotel: S(), check_in: S(), check_out: S(),
+  },
+  required: ['is_ticket'],
+};
+export function parseTicket(env, media, lang = 'uz') {
+  const prompt = `Read the attached document. Is it an air ticket, e-ticket, itinerary receipt, booking confirmation, boarding pass or hotel voucher?
+Return JSON: is_ticket; booking_ref; passenger; flights (every flight segment in order: flight_number like "HY 271", airline, from_city and to_city in ${lang === 'ru' ? 'Russian' : 'Uzbek (Latin script)'}, from_iata, to_iata, departure_local and arrival_local as "YYYY-MM-DDTHH:MM" in the local time printed on the document); hotel, check_in, check_out ("YYYY-MM-DD") for a hotel voucher.
+Copy what is printed; never guess a time. Use null for anything not on the document.`;
+  return gemini(env, { prompt, media, schema: TICKET_SCHEMA, timeoutMs: 40000 });
 }

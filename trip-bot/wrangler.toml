@@ -51,3 +51,7 @@ TZ_OFFSET_MIN = "300"
 
 # Secrets (set with `npx wrangler secret put NAME`, never put them here):
 # TELEGRAM_TOKEN, GEMINI_API_KEY, WEBHOOK_SECRET, PASSPORT_KEY
+
+# Cloudflare Workers Logs: request and error history in the dashboard (Workers -> trip-bot -> Logs).
+[observability]
+enabled = true
