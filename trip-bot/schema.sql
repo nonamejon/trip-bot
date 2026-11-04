@@ -41,6 +41,12 @@ CREATE TABLE IF NOT EXISTS members (
   added_at    INTEGER NOT NULL
 );
 
+-- Usernames the owner invited (/invite @username): the first message from that username gives access automatically
+CREATE TABLE IF NOT EXISTS invites (
+  username   TEXT PRIMARY KEY COLLATE NOCASE,     -- without the @
+  created_at INTEGER NOT NULL
+);
+
 -- Per-person settings: chosen language ('uz' | 'ru')
 CREATE TABLE IF NOT EXISTS prefs (
   telegram_id INTEGER PRIMARY KEY,

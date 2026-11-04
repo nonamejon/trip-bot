@@ -507,10 +507,19 @@ async function myTrips(env, L, lang, uid, chat) {
 }
 
 const ADMIN = {
+  async '/invite'(env, chat, arg) { // /invite @username: they get access the moment they write to the bot
+    const u = String(arg || '').trim().replace(/^@/, '').replace(/^https?:\/\/t\.me\//, '');
+    if (!/^[A-Za-z0-9_]{4,32}$/.test(u)) return send(env, chat, 'Usage: /invite @username');
+    await run(env, 'INSERT OR REPLACE INTO invites (username, created_at) VALUES (?, ?)', u, Date.now());
+    await logEvent(env, 'owner', 'invite', null, u);
+    return send(env, chat, `✅ @${esc(u)} is invited: the first time they write to the bot they get access (you will be told). /users to see invites.`);
+  },
   async '/users'(env, chat) { // who can use the bot; approved members can be removed here
     const members = await all(env, 'SELECT * FROM members ORDER BY added_at');
+    const invites = await all(env, 'SELECT username FROM invites ORDER BY created_at');
     const lines = [`Owner: <code>${esc(env.OWNER_ID)}</code>`, ...adminIds(env).map((id) => `Admin (wrangler.toml): <code>${esc(id)}</code>`),
-      ...members.map((m) => `Admin (approved): ${esc(m.name || '')}${m.username ? ' @' + esc(m.username) : ''} <code>${m.telegram_id}</code>`)];
+      ...members.map((m) => `Admin (approved): ${esc(m.name || '')}${m.username ? ' @' + esc(m.username) : ''} <code>${m.telegram_id}</code>`),
+      ...invites.map((i) => `Invited, not joined yet: @${esc(i.username)}`)];
     return send(env, chat, `<b>Users</b>\n${lines.join('\n')}\n\nNew people: they write to the bot, you get a "Give access" button.`,
       members.length ? kb(members.map((m) => [[`🗑 Remove ${m.name || m.username || m.telegram_id}`.slice(0, 60), `mr:${m.telegram_id}`]])) : {});
   },
@@ -820,6 +829,20 @@ async function finishBooking(env, t, source = 'agent') {
 }
 
 // ======================= access: the owner approves new people =======================
+
+// An invited username writes for the first time: give access, tell the owner. Returns true if they were invited.
+export async function acceptInvite(env, from) {
+  if (!from.username) return false;
+  const inv = await one(env, 'SELECT username FROM invites WHERE username = ? COLLATE NOCASE', from.username);
+  if (!inv) return false;
+  const name = [from.first_name, from.last_name].filter(Boolean).join(' ') || null;
+  await run(env, 'INSERT OR REPLACE INTO members (telegram_id, username, name, added_at) VALUES (?, ?, ?, ?)', Number(from.id), from.username, name, Date.now());
+  await run(env, 'DELETE FROM invites WHERE username = ? COLLATE NOCASE', from.username);
+  await logEvent(env, 'bot', 'member_added', null, `${from.id} @${from.username} (invite)`);
+  await loadMembers(env);
+  if (env.OWNER_ID) await send(env, env.OWNER_ID, `✅ ${esc(name || '')} @${esc(from.username)} (ID <code>${from.id}</code>) joined with your invite and can use the bot now.`).catch(() => {});
+  return true;
+}
 
 // Someone not on the list wrote to the bot: tell the owner (once a day per person), with a "Give access" button.
 export async function notifyStranger(env, from) {

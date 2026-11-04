@@ -4,7 +4,7 @@ Read `CHAT_LOG.md` for the full history. This file says what exists now and what
 
 ## What this is
 
-A private Telegram assistant in Uzbek or Russian. Roles: `OWNER_ID` is the maintainer (uses the assistant, gets error alerts, has the maintenance commands); `ADMIN_ID` lists the people who use the assistant (Azizbek at handover), with no alerts or maintenance commands. Each person has their own trips, calendar, reminders and chat (`util.userIds`). New people: when someone not on the list writes, the owner gets "👤 New person… ✅ Give access"; tapping it adds them to the `members` table (no redeploy) and sends them the language picker. `/users` (owner) lists everyone and removes approved members. Two sections, on a keyboard at the bottom of the chat:
+A private Telegram assistant in Uzbek or Russian. Roles: `OWNER_ID` is the maintainer (uses the assistant, gets error alerts, has the maintenance commands); `ADMIN_ID` lists the people who use the assistant (Azizbek at handover), with no alerts or maintenance commands. Each person has their own trips, calendar, reminders and chat (`util.userIds`). New people: when someone not on the list writes, the owner gets "👤 New person… ✅ Give access"; tapping it adds them to the `members` table (no redeploy) and sends them the language picker. `/invite @username` (owner) pre-approves a username: their first message gives access automatically (`invites` table). `/users` (owner) lists everyone, pending invites, and removes approved members. Invited 2026-11-04: @quvonchbekruzimurodov. Two sections, on a keyboard at the bottom of the chat:
 
 | Section | Main features |
 | --- | --- |
@@ -97,11 +97,11 @@ any open state -> cancelled
    - Pick an option and wait for the PDFs, the `.ics` file and the reminders.
    - `/fire T-0001` sends a trip's reminders immediately.
    - While testing, lower `AGENT_SLA_MIN` and `NUDGE_MIN` in `wrangler.toml` to see those timers fire.
-9. Watch the logs with `npx wrangler tail`. Admin commands: `/users`, `/alltrips`, `/trip T-0001`, `/log 30`, `/jobs`, `/now`, `/fire`, `/setstatus`.
+9. Watch the logs with `npx wrangler tail`. Admin commands: `/invite @username`, `/users`, `/alltrips`, `/trip T-0001`, `/log 30`, `/jobs`, `/now`, `/fire`, `/setstatus`.
 
 ## Testing
 
-- `npm test`: 134 checks
+- `npm test`: 140 checks
 - `npm run eval`: 37 real messages (several from actual use) against the real Gemini; must stay at 95%+ before deploying a prompt change. Last run: 37/37. over every flow, every message validated against Telegram's rules.
 - `SCENARIO=search npm run test:live -- <voice-dir> <report.md>`: real searches (Istanbul by voice, Guangzhou with flexible dates); last run: both found real options in ~40 s and completed.
 - `npm run test:live -- <voice-dir> <report.md>`: real Gemini 3.8 Flash on a full day of use (voice notes, PDF, Uzbek and Russian). Last run: all steps worked, slowest 19.7 s, no rule violations.

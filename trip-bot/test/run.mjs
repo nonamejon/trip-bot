@@ -540,6 +540,20 @@ n0 = sent.length;
 await update({ message: { message_id: ++msgId, from: { id: 999, is_bot: false }, chat: { id: 999, type: 'private' }, text: 'salom' } });
 assert(sent.slice(n0).some((x) => x.p.chat_id === 999 && x.p.text.includes('shaxsiy yordamchi')), 'after removal they are a stranger again');
 
+// invite by username: access the moment they write, no waiting for the owner
+await say('/invite @Quvonch_Test');
+assert(lastText().startsWith('✅ @Quvonch_Test is invited'), 'the owner invites a username');
+await update({ message: { message_id: ++msgId, from: { id: 777, is_bot: false, first_name: 'Quvonchbek', username: 'quvonch_test' }, chat: { id: 777, type: 'private' }, text: 'salom' } });
+show('invited person writes');
+assert(sqlite.prepare('SELECT 1 FROM members WHERE telegram_id = 777').get() && !sqlite.prepare('SELECT 1 FROM invites').get(), 'their first message gives access (username case does not matter)');
+assert(sent.some((x) => x.p.chat_id === 777 && JSON.stringify(x.p.reply_markup || '').includes('lg:uz')) && !sent.some((x) => x.p.chat_id === 777 && (x.p.text || '').includes('shaxsiy yordamchi')), 'they get the language picker, not the stranger message');
+assert(sent.some((x) => x.p.chat_id === '111' && (x.p.text || '').includes('@quvonch_test (ID <code>777</code>) joined')), 'the owner is told they joined');
+await update({ message: { message_id: ++msgId, from: { id: 778, is_bot: false, username: 'someone_else' }, chat: { id: 778, type: 'private' }, text: 'hi' } });
+assert(!sqlite.prepare('SELECT 1 FROM members WHERE telegram_id = 778').get(), 'other usernames are not let in');
+n0 = sent.length;
+await update({ message: { message_id: ++msgId, from: { id: 222, is_bot: false }, chat: { id: 222, type: 'private' }, text: '/invite @x_someone' } });
+assert(!sqlite.prepare('SELECT 1 FROM invites').get(), 'admins cannot invite');
+
 // Aviasales link and fares
 assert(aviasalesUrl({}, { origin_iata: 'TAS', destination_iata: 'IST', date_from: '2026-11-12', date_to: '2026-11-15', travelers: 1 }) === 'https://www.aviasales.uz/search/TAS1211IST15111', 'Aviasales search link format');
 assert(aviasalesUrl({}, { destination_iata: 'DXB', date_from: '2026-12-01', one_way: true, travelers: 2 }) === 'https://www.aviasales.uz/search/TAS0112DXB2', 'Aviasales one-way link for 2 adults');

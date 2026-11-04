@@ -7,7 +7,7 @@
 import { run, esc, strings, isUser, loadMembers } from './util.js';
 import { COMMANDS, STRANGER, AL } from './i18n.js';
 import { tg, send } from './telegram.js';
-import { handleOwnerMessage, handleCallback, handleAgentMessage, runChecks, reportError, notifyStranger } from './flow.js';
+import { handleOwnerMessage, handleCallback, handleAgentMessage, runChecks, reportError, notifyStranger, acceptInvite } from './flow.js';
 import { runJobs } from './mock.js';
 import { agentMode } from './agent.js';
 import { calendarFeed, secretaryChecks } from './secretary.js';
@@ -89,6 +89,7 @@ async function handleUpdate(env, update) {
 
   if (msg.chat.type === 'private') {
     if (!isUser(env, msg.from.id)) {
+      if (await acceptInvite(env, msg.from)) return handleOwnerMessage(env, msg); // invited: now a user (first screen: language)
       await send(env, msg.chat.id, STRANGER(esc(msg.from.id)));
       return notifyStranger(env, msg.from); // the owner can give access with one tap
     }
