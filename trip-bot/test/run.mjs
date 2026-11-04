@@ -201,9 +201,13 @@ const lastText = () => sent.filter((x) => x.method === 'sendMessage').at(-1)?.p.
 const assert = (c, m) => { if (!c) { console.error('ASSERTION FAILED: ' + m); process.exitCode = 1; } else console.log('   ok: ' + m); };
 
 // ---------- scenario ----------
-await update({ message: { message_id: 1, from: { id: 999, is_bot: false }, chat: { id: 999, type: 'private' }, text: 'hi' } });
+await update({ message: { message_id: 1, from: { id: 999, is_bot: false, first_name: 'Quvonchbek', username: 'quvonchbek_test' }, chat: { id: 999, type: 'private' }, text: 'hi' } });
 show('stranger writes');
-assert(sent.at(-1).p.text.includes('999'), 'stranger gets their id, nothing else');
+assert(sent.some((x) => x.p.chat_id === 999 && x.p.text.includes('999')), 'stranger gets their id, nothing else');
+assert(sent.some((x) => x.p.chat_id === '111' && x.p.text.includes('@quvonchbek_test') && JSON.stringify(x.p.reply_markup).includes('ma:999')), 'the owner is told, with a "Give access" button');
+const strangerNotes = () => sent.filter((x) => (x.p.text || '').startsWith('👤 New person')).length;
+await update({ message: { message_id: 2, from: { id: 999, is_bot: false, first_name: 'Quvonchbek' }, chat: { id: 999, type: 'private' }, text: 'hello?' } });
+assert(strangerNotes() === 1, 'the owner is told only once a day per person');
 
 await say('salom'); show('first message, no language yet');
 const lastKb = () => { const m = sent.filter((x) => x.method === 'sendMessage').at(-1); return JSON.stringify(m.p.reply_markup || ''); };
@@ -515,6 +519,26 @@ await cron(); show('watchdog');
 assert(sent.some((x) => (x.p.text || '').startsWith('Kechirasiz, oxirgi xabaringizga javob bera olmadim')) && sqlite.prepare('SELECT apologized FROM updates WHERE update_id = 999001').get().apologized === 1, 'a message cut off mid-way: the watchdog apologizes (once)');
 await cron();
 assert(sent.filter((x) => (x.p.text || '').startsWith('Kechirasiz, oxirgi')).length === 1, 'the watchdog apologizes only once');
+
+// access: the owner approves a new person with a button; admins cannot
+const tapAs2 = (who, data) => update({ callback_query: { id: 'cq' + updateId, from: { id: who, is_bot: false }, data, message: { message_id: msgId, chat: { id: who } } } });
+await tapAs2(222, 'ma:999');
+assert(!sqlite.prepare('SELECT 1 FROM members WHERE telegram_id = 999').get() && sent.at(-1).p.text === 'Нет доступа.', 'an admin cannot give access');
+await tap('ma:999'); show('owner gives access');
+assert(sqlite.prepare('SELECT username FROM members WHERE telegram_id = 999').get()?.username === 'quvonchbek_test', 'access given, stored with the username');
+assert(sent.some((x) => x.p.chat_id === 999 && JSON.stringify(x.p.reply_markup || '').includes('lg:uz')), 'the new person gets the language picker');
+await tapAs2(999, 'lg:uz');
+await update({ message: { message_id: ++msgId, from: { id: 999, is_bot: false }, chat: { id: 999, type: 'private' }, text: '/today' } });
+assert(sent.filter((x) => x.p.chat_id === 999).at(-1).p.text.includes('rejalar yoʻq'), 'the new person uses the assistant (own empty calendar)');
+await update({ message: { message_id: ++msgId, from: { id: 999, is_bot: false }, chat: { id: 999, type: 'private' }, text: '/log' } });
+assert(sent.filter((x) => x.p.chat_id === 999).at(-1).p.text === 'Bunday buyruqni bilmayman. /help ni bosing.', 'but has no maintenance commands');
+await say('/users'); show('/users');
+assert(lastText().includes('@quvonchbek_test') && lastKb().includes('mr:999'), '/users lists approved people with a remove button');
+await tap('mr:999');
+assert(!sqlite.prepare('SELECT 1 FROM members WHERE telegram_id = 999').get(), 'removed');
+n0 = sent.length;
+await update({ message: { message_id: ++msgId, from: { id: 999, is_bot: false }, chat: { id: 999, type: 'private' }, text: 'salom' } });
+assert(sent.slice(n0).some((x) => x.p.chat_id === 999 && x.p.text.includes('shaxsiy yordamchi')), 'after removal they are a stranger again');
 
 // Aviasales link and fares
 assert(aviasalesUrl({}, { origin_iata: 'TAS', destination_iata: 'IST', date_from: '2026-11-12', date_to: '2026-11-15', travelers: 1 }) === 'https://www.aviasales.uz/search/TAS1211IST15111', 'Aviasales search link format');

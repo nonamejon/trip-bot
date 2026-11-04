@@ -38,7 +38,7 @@ export const COMMANDS = {
   ],
 };
 
-export const STRANGER = (id) => `Bu shaxsiy yordamchi. Telegram ID raqamingiz: <code>${id}</code>. Agar bot siz uchun moʻljallangan boʻlsa, bu raqamni administratorga yuboring.\n\nЭто личный помощник. Ваш Telegram ID: <code>${id}</code>. Если бот предназначен для вас, отправьте этот номер администратору.`;
+export const STRANGER = (id) => `Bu shaxsiy yordamchi. Bot egasiga soʻrovingiz yuborildi — ruxsat berilsa, shu yerda xabar olasiz. (Telegram ID: <code>${id}</code>)\n\nЭто личный помощник. Владельцу бота отправлен ваш запрос — если доступ дадут, вы получите сообщение здесь. (Telegram ID: <code>${id}</code>)`;
 
 export const O = {
   uz: {

@@ -18,7 +18,11 @@ export async function logEvent(env, actor, action, tripId = null, detail = null)
 // ---------- who may use the bot ----------
 // The owner and every admin use the assistant, each with their own trips, calendar, reminders and chat.
 export const adminIds = (env) => String(env.ADMIN_ID || '').split(',').map((s) => s.trim()).filter(Boolean);
-export const userIds = (env) => [...new Set([String(env.OWNER_ID || '').trim(), ...adminIds(env)].filter(Boolean))];
+// Users: the owner, ADMIN_ID, and the members approved in the bot (loaded per request by loadMembers).
+export const userIds = (env) => [...new Set([String(env.OWNER_ID || '').trim(), ...adminIds(env), ...(env.__members || [])].filter(Boolean))];
+export async function loadMembers(env) {
+  try { env.__members = (await all(env, 'SELECT telegram_id FROM members')).map((r) => String(r.telegram_id)); } catch { env.__members ||= []; }
+}
 export const isUser = (env, id) => id != null && userIds(env).includes(String(id));
 
 // ---------- language (per person: 'uz' | 'ru'; null until they pick) ----------

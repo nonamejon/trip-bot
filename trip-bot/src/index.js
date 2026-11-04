@@ -4,10 +4,10 @@
 //   GET  /cal/<user id>/<token>.ics  a user's calendar, for subscribing from a phone (link comes from the bot)
 //   cron (every minute)    mock agent replies, trip checks, secretary reminders and the morning brief
 
-import { run, esc, strings, isUser } from './util.js';
+import { run, esc, strings, isUser, loadMembers } from './util.js';
 import { COMMANDS, STRANGER, AL } from './i18n.js';
 import { tg, send } from './telegram.js';
-import { handleOwnerMessage, handleCallback, handleAgentMessage, runChecks, reportError } from './flow.js';
+import { handleOwnerMessage, handleCallback, handleAgentMessage, runChecks, reportError, notifyStranger } from './flow.js';
 import { runJobs } from './mock.js';
 import { agentMode } from './agent.js';
 import { calendarFeed, secretaryChecks } from './secretary.js';
@@ -55,6 +55,7 @@ export default {
     // /cal/<user id>/<token>.ics; the older /cal/<token>.ics is the owner's
     const cal = url.pathname.match(/^\/cal\/(?:(\d+)\/)?([0-9a-f]{32})\.ics$/);
     if (cal && req.method === 'GET') {
+      await loadMembers(env);
       const ics = await calendarFeed(env, cal[1] || env.OWNER_ID, cal[2]);
       if (!ics) return new Response('not found', { status: 404 });
       return new Response(ics, { headers: { 'content-type': 'text/calendar; charset=utf-8', 'cache-control': 'no-store' } });
@@ -65,6 +66,7 @@ export default {
 
   async scheduled(event, env, ctx) {
     ctx.waitUntil((async () => {
+      await loadMembers(env);
       try { await runJobs(env); } catch (e) { await reportError(env, e, 'cron jobs'); }
       try { await runChecks(env); } catch (e) { await reportError(env, e, 'cron checks'); }
       try { await secretaryChecks(env); } catch (e) { await reportError(env, e, 'cron secretary'); }
@@ -73,6 +75,7 @@ export default {
 };
 
 async function handleUpdate(env, update) {
+  await loadMembers(env);
   // Telegram may deliver the same update twice; handle each one once.
   const chat = update.message?.chat?.id ?? update.callback_query?.message?.chat?.id;
   const ownerChat = isUser(env, chat) ? chat : null; // users' chats are watched by the watchdog
@@ -86,7 +89,8 @@ async function handleUpdate(env, update) {
 
   if (msg.chat.type === 'private') {
     if (!isUser(env, msg.from.id)) {
-      return send(env, msg.chat.id, STRANGER(esc(msg.from.id)));
+      await send(env, msg.chat.id, STRANGER(esc(msg.from.id)));
+      return notifyStranger(env, msg.from); // the owner can give access with one tap
     }
     return handleOwnerMessage(env, msg);
   }

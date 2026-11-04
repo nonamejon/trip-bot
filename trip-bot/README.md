@@ -60,6 +60,7 @@ Admin commands (from `ADMIN_ID`):
 
 | Command | What it does |
 | --- | --- |
+| `/users` | Who can use the bot; remove approved people. New people get access with the "✅ Give access" button you receive when they write to the bot |
 | `/alltrips` | List recent trips of all users (`/trips` shows your own) |
 | `/trip T-0001` | Show one trip's full record |
 | `/log 30` | Show the last 30 entries of the audit log |

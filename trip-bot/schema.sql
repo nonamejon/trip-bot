@@ -33,6 +33,14 @@ CREATE TABLE IF NOT EXISTS travelers (
   updated_at   INTEGER
 );
 
+-- People the owner gave access with the "Give access" button (in addition to ADMIN_ID in wrangler.toml)
+CREATE TABLE IF NOT EXISTS members (
+  telegram_id INTEGER PRIMARY KEY,
+  username    TEXT,
+  name        TEXT,
+  added_at    INTEGER NOT NULL
+);
+
 -- Per-person settings: chosen language ('uz' | 'ru')
 CREATE TABLE IF NOT EXISTS prefs (
   telegram_id INTEGER PRIMARY KEY,

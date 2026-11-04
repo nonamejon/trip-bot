@@ -10,7 +10,7 @@
 import {
   MIN, DAY, one, all, run, logEvent, getTrip, activeTrip, createTrip, saveTrip, setStatus, WITH_AGENT, OPEN, code,
   fmtLocal, hmLocal, dshort, localToUtc, localISODate, addDaysISO, nights, esc, money, refundWord, b64, encrypt, decrypt,
-  getLang, setLang, strings, getMode, setMode, clearMode, logChat, recentChat, adminIds, isUser,
+  getLang, setLang, strings, getMode, setMode, clearMode, logChat, recentChat, adminIds, isUser, loadMembers,
 } from './util.js';
 import { tg, tgUpload, send, typing, whileTyping, kb, replyKb, download } from './telegram.js';
 import { parseRequest, parseOffers, transcribe, routeMessage, parseWhen, parseTicket } from './gemini.js';
@@ -507,6 +507,13 @@ async function myTrips(env, L, lang, uid, chat) {
 }
 
 const ADMIN = {
+  async '/users'(env, chat) { // who can use the bot; approved members can be removed here
+    const members = await all(env, 'SELECT * FROM members ORDER BY added_at');
+    const lines = [`Owner: <code>${esc(env.OWNER_ID)}</code>`, ...adminIds(env).map((id) => `Admin (wrangler.toml): <code>${esc(id)}</code>`),
+      ...members.map((m) => `Admin (approved): ${esc(m.name || '')}${m.username ? ' @' + esc(m.username) : ''} <code>${m.telegram_id}</code>`)];
+    return send(env, chat, `<b>Users</b>\n${lines.join('\n')}\n\nNew people: they write to the bot, you get a "Give access" button.`,
+      members.length ? kb(members.map((m) => [[`🗑 Remove ${m.name || m.username || m.telegram_id}`.slice(0, 60), `mr:${m.telegram_id}`]])) : {});
+  },
   async '/alltrips'(env, chat) { // every user's trips (the user command /trips shows your own)
     const rows = await all(env, 'SELECT id, status, fields, updated_at FROM trips ORDER BY id DESC LIMIT 15');
     return send(env, chat, rows.length ? rows.map((r) => `${code(r.id)} · ${r.status} · ${esc(JSON.parse(r.fields || '{}').destination || '?')} · ${fmtLocal(env, r.updated_at)}`).join('\n') : 'No trips.');
@@ -554,6 +561,10 @@ export async function handleCallback(env, cq) {
   const answer = (text) => tg(env, 'answerCallbackQuery', { callback_query_id: cq.id, ...(text ? { text } : {}) }).catch(() => {});
   const dropKeyboard = () => tg(env, 'editMessageReplyMarkup', { chat_id: chat, message_id: cq.message.message_id, reply_markup: { inline_keyboard: [] } }).catch(() => {});
   const { lang, L } = await strings(env, uid);
+  if (['ma', 'mx', 'mr'].includes(data.split(':')[0])) { // the owner's access buttons
+    if (!isMaintainer(env, uid)) return answer(L.notAllowed);
+    return memberButton(env, data, chat, answer, dropKeyboard);
+  }
   if (!isOwner(env, uid)) return answer(L.notAllowed);
 
   const [a, idStr, argStr] = data.split(':');
@@ -806,6 +817,42 @@ async function finishBooking(env, t, source = 'agent') {
   await send(env, t.owner_id, (await tripText(env, L, lang, t)) + timeHint, kb([[[t.flight_at ? L.btnChangeTime : L.btnFlightTime, `tf:${t.id}`]]]));
   await tgUpload(env, 'sendDocument', { chat_id: t.owner_id, caption: L.icsCaption }, 'document', `${t.code}.ics`, tripIcs(t, o, L), 'text/calendar')
     .catch((e) => reportError(env, e, 'send ics'));
+}
+
+// ======================= access: the owner approves new people =======================
+
+// Someone not on the list wrote to the bot: tell the owner (once a day per person), with a "Give access" button.
+export async function notifyStranger(env, from) {
+  if (!env.OWNER_ID || String(from.id) === String(env.OWNER_ID)) return;
+  if (await one(env, `SELECT 1 FROM events WHERE action = 'stranger' AND detail LIKE ? AND ts > ?`, `{"id":${Number(from.id)},%`, Date.now() - DAY)) return;
+  const name = [from.first_name, from.last_name].filter(Boolean).join(' ');
+  await logEvent(env, 'bot', 'stranger', null, { id: Number(from.id), username: from.username || null, name: name || null });
+  await send(env, env.OWNER_ID, `👤 New person wrote to the bot: <b>${esc(name || '?')}</b>${from.username ? ' @' + esc(from.username) : ''} (ID <code>${from.id}</code>).\nGive them access to the assistant?`,
+    kb([[['✅ Give access', `ma:${from.id}`], ['Ignore', `mx:${from.id}`]]]));
+}
+
+async function memberButton(env, data, chat, answer, dropKeyboard) {
+  const [a, idStr] = data.split(':');
+  const id = Number(idStr);
+  if (a === 'mx') { await answer('Ignored'); return dropKeyboard(); }
+  if (a === 'mr') {
+    await run(env, 'DELETE FROM members WHERE telegram_id = ?', id);
+    await logEvent(env, 'owner', 'member_removed', null, String(id));
+    await loadMembers(env);
+    await answer('Removed');
+    return send(env, chat, `🗑 ${id} can no longer use the bot.`);
+  }
+  // ma: give access
+  if (isUser(env, id)) { await answer('Already has access'); return dropKeyboard(); }
+  const ev = await one(env, `SELECT detail FROM events WHERE action = 'stranger' AND detail LIKE ? ORDER BY id DESC LIMIT 1`, `{"id":${id},%`);
+  const who = ev ? JSON.parse(ev.detail) : {};
+  await run(env, 'INSERT OR REPLACE INTO members (telegram_id, username, name, added_at) VALUES (?, ?, ?, ?)', id, who.username || null, who.name || null, Date.now());
+  await logEvent(env, 'owner', 'member_added', null, String(id));
+  await loadMembers(env);
+  await answer('Access given');
+  await dropKeyboard();
+  await send(env, chat, `✅ ${esc(who.name || String(id))}${who.username ? ' @' + esc(who.username) : ''} can use the bot now. /users to see everyone.`);
+  return askLanguage(env, id).catch((e) => reportError(env, e, 'welcome new member')); // their first screen: pick a language
 }
 
 // ======================= tickets =======================
