@@ -18,7 +18,7 @@ database_id = "a6b9448f-7127-4913-9ea5-bc786dddc799"
 #   ADMIN_ID: people who use the assistant (comma-separated), e.g. Azizbek. They never see alerts or maintenance commands.
 #   Each person has their own trips, calendar, reminders and chat. Anyone else gets "this is a private assistant".
 OWNER_ID = "5503792899"
-ADMIN_ID = "606554606"
+ADMIN_ID = "606554606,116590869"
 
 # Where trip requests go:
 #   "search" = no agent: the bot finds real flights and hotels itself (Gemini + Google Search) and shows them with booking links.

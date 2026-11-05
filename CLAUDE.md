@@ -4,7 +4,7 @@ Read `CHAT_LOG.md` for the full history. This file says what exists now and what
 
 ## What this is
 
-A private Telegram assistant in Uzbek or Russian. Roles: `OWNER_ID` is the maintainer (uses the assistant, gets error alerts, has the maintenance commands); `ADMIN_ID` lists the people who use the assistant (Azizbek at handover), with no alerts or maintenance commands. Each person has their own trips, calendar, reminders and chat (`util.userIds`). New people: when someone not on the list writes, the owner gets "👤 New person… ✅ Give access"; tapping it adds them to the `members` table (no redeploy) and sends them the language picker. `/invite @username` (owner) pre-approves a username: their first message gives access automatically (`invites` table). `/users` (owner) lists everyone, pending invites, and removes approved members. Invited 2026-11-04: @quvonchbekruzimurodov. Two sections, on a keyboard at the bottom of the chat:
+A private Telegram assistant in Uzbek or Russian. Roles: `OWNER_ID` is the maintainer (uses the assistant, gets error alerts, has the maintenance commands); `ADMIN_ID` lists the people who use the assistant (Azizbek at handover), with no alerts or maintenance commands. Each person has their own trips, calendar, reminders and chat (`util.userIds`). New people: when someone not on the list writes, the owner gets "👤 New person… ✅ Give access"; tapping it adds them to the `members` table (no redeploy) and sends them the language picker. `/invite @username` (owner) pre-approves a username: their first message gives access automatically (`invites` table). `/users` (owner) lists everyone, pending invites, and removes approved members. @quvonchbekruzimurodov joined via invite (member 569063107). Two sections, on a keyboard at the bottom of the chat:
 
 | Section | Main features |
 | --- | --- |
@@ -90,7 +90,7 @@ any open state -> cancelled
 4. `GEMINI_MODEL` is `gemini-3.8-flash`, always (user's choice; no cheaper fallback). On 429/5xx or a timeout (15 s) it retries the same model once (12 s). The key is on the billed tier.
 5. `npx wrangler deploy`
 6. Open `https://trip-bot.<subdomain>.workers.dev/setup?key=<WEBHOOK_SECRET>`. This sets the webhook and the bot's command list.
-7. Done: `OWNER_ID` is `5503792899` (the maintainer: alerts and maintenance commands). `ADMIN_ID` = `606554606` (a user). At handover add Azizbek's ID to `ADMIN_ID`; the owner stays the maintainer.
+7. Done: `OWNER_ID` is `5503792899` (the maintainer: alerts and maintenance commands). `ADMIN_ID` = `606554606,116590869` (users; `116590869` is Azizbek, added 2026-11-05). The owner stays the maintainer.
 8. Test in mock mode:
    - Send a voice note in Uzbek and approve the card.
    - Send `/now` to make the mock agent answer immediately.
