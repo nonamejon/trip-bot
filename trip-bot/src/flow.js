@@ -291,6 +291,12 @@ export async function handleOwnerMessage(env, msg) {
       return applyTicket(env, td, tk, L, lang, chat);
     }
     case 'trip_status': return send(env, chat, t ? statusText(env, L, lang, t) : L.noTripTell);
+    case 'trip_finish': { // the trip happened: stop reminders and close it (not a cancellation)
+      // The trip he is on: the latest one whose flight has already left; else his only/next booked one.
+      const row = await one(env, `SELECT id FROM trips WHERE owner_id = ? AND status IN ('booked', 'chosen')
+        ORDER BY (flight_at IS NOT NULL AND flight_at <= ?) DESC, CASE WHEN flight_at <= ? THEN -flight_at ELSE flight_at END LIMIT 1`, uid, Date.now(), Date.now());
+      return row ? finishTrip(env, await getTrip(env, row.id), L, chat) : send(env, chat, L.noTrip);
+    }
     case 'trip_cancel':
       if (!t) return send(env, chat, L.noCancel);
       return ['collecting', 'draft'].includes(t.status) ? cancelTrip(env, t, 'owner') : askCancel(env, t);
@@ -411,6 +417,7 @@ async function tripCard(env, chat, L, lang, t) {
   if (isSearch(env) && t.status === 'chosen') rows.push([[L.btnBooked, `bk:${t.id}`]]);
   if (['booked', 'done'].includes(t.status) && o) rows.push([[L.btnTripIcs, `tc:${t.id}`]]);
   if (t.status === 'booked' && !t.flight_at) rows.push([[L.btnFlightTime, `tf:${t.id}`]]);
+  if (t.status === 'booked') rows.push([[L.btnFinishTrip, `tz:${t.id}`]]); // it happened: stop reminders (not a cancellation)
   if (OPEN.includes(t.status)) rows.push([[L.btnCancelTrip, `tx:${t.id}`]]);
   return send(env, chat, lines.join('\n'), kb(rows));
 }
@@ -587,7 +594,7 @@ export async function handleCallback(env, cq) {
   if (await handleSecCallback(env, { a, id: idStr, arg: argStr, uid, chat, L, lang, answer, dropKeyboard })) return;
 
   // My trips: a trip's card and what can be done from it
-  if (['tv', 'ov', 'td', 'aw', 'tc', 'tf', 'tx', 'bk', 'bl', 'rc', 'sr'].includes(a)) {
+  if (['tv', 'ov', 'td', 'aw', 'tc', 'tf', 'tx', 'bk', 'bl', 'rc', 'sr', 'tz'].includes(a)) {
     const t = await getTrip(env, +idStr);
     if (!t || t.owner_id !== uid) return answer(L.staleBtn);
     await answer();
@@ -613,6 +620,7 @@ export async function handleCallback(env, cq) {
         if (t.status !== 'chosen') return send(env, chat, L.staleBtn);
         t.chosen = null; await setStatus(env, t, 'offers', 'owner'); return offersMessage(env, t, L, lang);
       case 'sr': return ['sent', 'offers'].includes(t.status) ? otherOptions(env, t) : send(env, chat, L.staleBtn);
+      case 'tz': return ['booked', 'chosen'].includes(t.status) ? finishTrip(env, t, L, chat) : send(env, chat, L.staleBtn);
     }
   }
 
@@ -702,7 +710,15 @@ async function cancelTrip(env, t, actor) {
   await setStatus(env, t, 'cancelled', actor);
   await run(env, 'UPDATE jobs SET done_at = ? WHERE trip_id = ? AND done_at IS NULL', Date.now(), t.id);
   if (withAgent) await toAgent(env, t, AL(env).cancel(t.code), 'cancel');
-  return send(env, t.owner_id, L.cancelled(t.code, withAgent));
+  return send(env, t.owner_id, L.cancelled(t.code, withAgent && !isSearch(env))); // "I told the agent" only if there is one
+}
+
+// The trip took place (or he is on it) and he wants no more reminders: close it as done.
+async function finishTrip(env, t, L, chat) {
+  await run(env, 'DELETE FROM reminders WHERE trip_id = ? AND sent_at IS NULL', t.id);
+  await run(env, 'UPDATE jobs SET done_at = ? WHERE trip_id = ? AND done_at IS NULL', Date.now(), t.id);
+  await setStatus(env, t, 'done', 'owner');
+  return send(env, chat, L.tripFinished(t.code, esc(t.fields.destination || '')));
 }
 
 // ======================= agent side =======================
@@ -819,7 +835,8 @@ async function finishBooking(env, t, source = 'agent') {
   if (!isDate(t.fields.date_to) && isDate(o.date_back)) t.fields.date_to = o.date_back;
   t.flight_at = localToUtc(env, o.outbound_datetime) ?? null;
   const back = localToUtc(env, t.fields.date_to);
-  t.done_at = back != null ? back + DAY : null;
+  // Closed the day after the return; a one-way or undated booking closes 2 days after the flight.
+  t.done_at = back != null ? back + DAY : (t.flight_at ? t.flight_at + 2 * DAY : null);
   await setStatus(env, t, 'booked', 'agent');
   await scheduleFlightReminders(env, t);
   const timeHint = source === 'search' && t.flight_at ? `\n\n${L.checkTimeHint}` : '';
@@ -971,6 +988,18 @@ export async function runChecks(env) {
     } else {
       await send(env, t.owner_id, L.leave(route(L, t), hmLocal(env, t.flight_at)));
     }
+  }
+
+  // Requests whose dates have passed without a booking (still searching, choosing, or chosen but never booked) and that
+  // nobody has touched for a day: close them quietly so they stop showing up. "Passed": the departure date, or the end
+  // of a flexible window, was before yesterday.
+  const yesterday = localISODate(env, now - DAY);
+  for (const r of await all(env, `SELECT id FROM trips WHERE status IN ('collecting', 'draft', 'sent', 'offers', 'chosen')
+      AND COALESCE(json_extract(fields, '$.date_from'), json_extract(fields, '$.window_to')) < ? AND updated_at < ?`, yesterday, now - DAY)) {
+    const t = await getTrip(env, r.id);
+    await run(env, 'UPDATE jobs SET done_at = ? WHERE trip_id = ? AND done_at IS NULL', now, t.id);
+    await setStatus(env, t, 'cancelled', 'cron');
+    await logEvent(env, 'cron', 'expired', t.id);
   }
 
   for (const r of await all(env, `SELECT id FROM trips WHERE status = 'booked' AND done_at IS NOT NULL AND done_at <= ?`, now)) {

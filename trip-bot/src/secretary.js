@@ -74,13 +74,14 @@ export async function agenda(env, uid, L, lang, fromISO, toISO) {
   const rems = await all(env, 'SELECT * FROM user_reminders WHERE owner_id = ? AND done = 0 AND due_at >= ? AND due_at < ? ORDER BY due_at', uid, from, to);
   for (const r of rems) put(localISODate(env, r.due_at), r.due_at, `• ⏰ ${hmLocal(env, r.due_at)} ${esc(r.text)}${r.repeat !== 'none' ? ' 🔁' : ''}`);
 
-  for (const row of await all(env, `SELECT id FROM trips WHERE owner_id = ? AND status IN ('chosen', 'booked')`, uid)) {
+  // Booked trips only (not ones he is still choosing), and only on the days that matter: the flight out and the
+  // day back. No line for every day of the stay: that read like a new flight reminder each morning.
+  for (const row of await all(env, `SELECT id FROM trips WHERE owner_id = ? AND status = 'booked'`, uid)) {
     const t = await getTrip(env, row.id), f = t.fields;
     const route = `${esc(f.origin || L.origin)} → ${esc(f.destination || '?')}`;
     if (t.flight_at) put(localISODate(env, t.flight_at), t.flight_at, `• ✈️ ${hmLocal(env, t.flight_at)} ${L.flightWord}: ${route} (${t.code})`);
-    if (isDate(f.date_from) && isDate(f.date_to)) {
-      for (let d = f.date_from; d <= f.date_to && d <= toISO; d = addDaysISO(d, 1)) put(d, dayStart(env, d) - 2, `• 🧳 ${L.tripWord}: ${route} (${t.code})`);
-    }
+    else if (isDate(f.date_from)) put(f.date_from, dayStart(env, f.date_from) - 2, `• ✈️ ${L.flightWord}: ${route} (${t.code})`);
+    if (isDate(f.date_to) && !f.one_way) put(f.date_to, dayStart(env, f.date_to) - 1, `• 🛬 ${L.back}: ${esc(f.destination || '?')} → ${esc(f.origin || L.origin)} (${t.code})`);
   }
   if (!days.size) return null;
   const today = localISODate(env), tomorrow = addDaysISO(today, 1);

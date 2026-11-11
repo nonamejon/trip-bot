@@ -149,6 +149,7 @@ function fakeRoute(prompt, hasMedia) {
   const pending = (prompt.match(/you asked him a question about it: "{3}([\s\S]*?)"{3}/) || [])[1];
   if (hasMedia && /^(audio|video)/.test(lastGeminiMime)) return { intent: 'trip', transcript: 'Istanbulga 12-noyabr ertalab uchishim kerak, 3 kunga.' };
   if (pending && /juma/.test(pending)) return { intent: 'event', ev_title: 'Uchrashuv', ev_date: localISO(4), ev_time: '10:00' };
+  if (/uchib keldim/.test(m)) return { intent: 'trip_finish' };
   if (/agentga|arzonroq/.test(m)) return { intent: 'trip_note' };
   if (/chiptam/.test(m)) return { intent: 'trip_docs' };
   if (/xatoga/.test(m)) return { intent: 'chat', reply: 'x' };
@@ -539,6 +540,38 @@ assert(!sqlite.prepare('SELECT 1 FROM members WHERE telegram_id = 999').get(), '
 n0 = sent.length;
 await update({ message: { message_id: ++msgId, from: { id: 999, is_bot: false }, chat: { id: 999, type: 'private' }, text: 'salom' } });
 assert(sent.slice(n0).some((x) => x.p.chat_id === 999 && x.p.text.includes('shaxsiy yordamchi')), 'after removal they are a stranger again');
+
+// a booked trip after its flight (real case: flight 9 Nov, stay 10-13 Nov): no daily "trip" line in the brief or
+// agenda; "I already flew" closes it instead of offering to cancel
+const finIns = sqlite.prepare(`INSERT INTO trips (owner_id, status, fields, offers, chosen, flight_at, done_at, created_at, updated_at) VALUES (111, 'booked', ?, ?, 0, ?, ?, ?, ?)`)
+  .run(JSON.stringify({ origin: 'Germaniya', destination: 'Saudiya Arabistoni', date_from: localISO(4), date_to: localISO(6) }),
+    JSON.stringify([{ label: '1-variant', airline: 'Pegasus', outbound: '14:30 → 01:25', refund: 'none' }]), localMs(3, '14:30'), localMs(7, '00:00'), NOW, NOW);
+const finTrip = Number(finIns.lastInsertRowid);
+const dayAfterFlight = localMs(4, '08:00'); // computed before the clock moves (localMs is relative to NOW)
+NOW = dayAfterFlight; await cron();
+await say('/today'); show('day after the flight: /today');
+assert(!lastText().includes('Saudiya'), 'the day after the flight: nothing about the trip in today\'s plan (no daily "trip" line)');
+await tap('ag:w'); show('week during the stay');
+assert(!lastText().includes('🧳') && (lastText().match(/Saudiya/g) || []).length === 1 && lastText().includes('🛬 Qaytish: Saudiya'), 'the week view shows only the return day, not every day of the stay');
+await tap(`tv:${finTrip}`);
+assert(lastKb().includes(`tz:${finTrip}`), 'a booked trip card has "the trip happened" (stop reminders)');
+await say('allaqachon uchib keldim, endi eslatmang'); show('"I already flew"');
+assert(sqlite.prepare('SELECT status FROM trips WHERE id = ?').get(finTrip).status === 'done' && lastText().includes('yakunlandi') && !lastKb().includes('cy:'), '"I already flew, stop reminding" closes the trip as done, not a cancellation');
+
+// an unbooked request whose dates passed and that nobody touched for a day is closed quietly
+const staleIns = sqlite.prepare(`INSERT INTO trips (owner_id, status, fields, offers, chosen, created_at, updated_at) VALUES (111, 'chosen', ?, '[]', 0, ?, ?)`)
+  .run(JSON.stringify({ destination: 'Urganch', date_from: localISO(-6), date_to: localISO(-1) }), NOW - 8 * 86400e3, NOW - 8 * 86400e3);
+const freshPast = sqlite.prepare(`INSERT INTO trips (owner_id, status, fields, offers, created_at, updated_at) VALUES (111, 'draft', ?, '[]', ?, ?)`)
+  .run(JSON.stringify({ destination: 'Samarqand', date_from: localISO(-5) }), NOW, NOW);
+await cron();
+assert(sqlite.prepare('SELECT status FROM trips WHERE id = ?').get(Number(staleIns.lastInsertRowid)).status === 'cancelled', 'a stale unbooked trip with past dates is closed');
+assert(sqlite.prepare('SELECT status FROM trips WHERE id = ?').get(Number(freshPast.lastInsertRowid)).status === 'draft', 'a request he is working on right now is left alone even with a past date');
+// cancelling in search mode: no "I told the agent"
+env.AGENT_MODE = 'search';
+sqlite.prepare(`UPDATE trips SET status = 'offers' WHERE id = ?`).run(Number(freshPast.lastInsertRowid));
+await tap(`tx:${Number(freshPast.lastInsertRowid)}`); await tap(`cy:${Number(freshPast.lastInsertRowid)}`);
+assert(lastText().includes('bekor qilindi') && !lastText().includes('Agentga'), 'search mode: cancelling does not claim to have told an agent');
+env.AGENT_MODE = 'mock';
 
 // invite by username: access the moment they write, no waiting for the owner
 await say('/invite @Quvonch_Test');

@@ -172,7 +172,7 @@ const nowLine = (env) => {
 const ROUTE_SCHEMA = {
   type: 'OBJECT',
   properties: {
-    intent: { type: 'STRING', enum: ['trip', 'trip_note', 'trip_docs', 'trip_status', 'trip_cancel', 'event', 'reminder', 'translate', 'letter', 'agenda', 'reminders_list', 'chat'] },
+    intent: { type: 'STRING', enum: ['trip', 'trip_note', 'trip_docs', 'trip_status', 'trip_cancel', 'trip_finish', 'event', 'reminder', 'translate', 'letter', 'agenda', 'reminders_list', 'chat'] },
     transcript: S(),
     question: S(),
     reply: S(),
@@ -206,7 +206,8 @@ Decide the intent:
 - trip_note: something for the travel agent about the trip the agent is already working on (seat, meal, a question for the agent, "agentga ayt ...").
 - trip_docs: he sends his ticket, booking confirmation, boarding pass or hotel voucher (a file or photo) for his trip.
 - trip_status: he asks where his trip/booking stands.
-- trip_cancel: he wants to cancel his trip.
+- trip_cancel: he wants to cancel a trip that has not happened yet ("bekor qil", "отмени поездку").
+- trip_finish: the trip has already happened or is under way and he wants no more reminders about it ("allaqachon uchib keldim", "bordim, endi eslatma", "я уже прилетел", "stop reminding me"). Never trip_cancel for this.
 - event: put a meeting/appointment/event into his calendar ("ertaga 15:00 da uchrashuv", "встреча в пятницу в 10").
 - reminder: remind him to do something at a time ("eslat", "напомни", "remind me"), once or repeating.
 - translate: translate text, a voice note, a photo or a document.

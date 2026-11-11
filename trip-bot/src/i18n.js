@@ -475,3 +475,13 @@ O.ru.sorryLost = 'Извините, не успел ответить на ваш
 
 O.uz.perNight = '/kecha';
 O.ru.perNight = '/ночь';
+
+// The trip took place: stop reminders
+Object.assign(O.uz, {
+  btnFinishTrip: '✅ Safar yakunlandi (eslatmalarni toʻxtatish)',
+  tripFinished: (code, dest) => `Yaxshi, ${dest} safari (${code}) yakunlandi — u haqida boshqa eslatmayman. Oq yoʻl!`,
+});
+Object.assign(O.ru, {
+  btnFinishTrip: '✅ Поездка состоялась (без напоминаний)',
+  tripFinished: (code, dest) => `Хорошо, поездка ${dest} (${code}) завершена — больше не напоминаю. Хорошей дороги!`,
+});
