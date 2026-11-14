@@ -51,7 +51,7 @@ trip-bot/                 the bot (deploy this)
   test/live.mjs           live test (npm run test:live): real Gemini, fake Telegram; writes a transcript report
   test/eval.mjs           regression set against the real Gemini (npm run eval)
   test/telegram-rules.mjs what real Telegram would reject (HTML, lengths, button data); used by both tests
-  wrangler.toml           config; D1 id filled in; OWNER_ID and ADMIN_ID empty
+  wrangler.toml           config: D1 id, roles (OWNER_ID, ADMIN_ID), AGENT_MODE, timings, Aviasales marker
   README.md               setup and admin commands
 simulator/                the HTML simulator built by mistake; keep only as a reference
 original-docs/            first-day Uzbek spec, Telegram screen designs, slides (old stack, outdated)
@@ -79,33 +79,20 @@ any open state -> cancelled
 - D1 `trip-bot`, id `a6b9448f-7127-4913-9ea5-bc786dddc799`, region EEUR. The live schema matches `schema.sql` (later tables and columns were added through the connector with `CREATE TABLE` / `ALTER TABLE ADD COLUMN`; do the same for future changes).
 - Worker `trip-bot` deployed at https://trip-bot.zsayidfozil.workers.dev; secrets set; webhook set (bot `@trip_t_est_bot`). The deploy API token has no D1 permission; query D1 through the Cloudflare connector.
 
-## Next steps, in order
+## How to work on it (everything below is already set up and live)
 
-1. `cd trip-bot && npm install`
-2. `npx wrangler login`
-3. Set the secrets. The user must supply the Telegram token and Gemini key themselves.
-   ```
-   npx wrangler secret put TELEGRAM_TOKEN    # from @BotFather
-   npx wrangler secret put GEMINI_API_KEY    # paid Gemini key
-   npx wrangler secret put WEBHOOK_SECRET    # random letters and digits
-   npx wrangler secret put PASSPORT_KEY      # openssl rand -base64 32
-   ```
-4. `GEMINI_MODEL` is `gemini-3.8-flash`, always (user's choice; no cheaper fallback). On 429/5xx or a timeout (15 s) it retries the same model once (12 s). The key is on the billed tier.
-5. `npx wrangler deploy`
-6. Open `https://trip-bot.<subdomain>.workers.dev/setup?key=<WEBHOOK_SECRET>`. This sets the webhook and the bot's command list.
-7. Done: `OWNER_ID` is `5503792899` (the maintainer: alerts and maintenance commands). `ADMIN_ID` = `606554606,116590869` (users; `116590869` is Azizbek, added 2026-11-05). The owner stays the maintainer.
-8. Test in mock mode:
-   - Send a voice note in Uzbek and approve the card.
-   - Send `/now` to make the mock agent answer immediately.
-   - Pick an option and wait for the PDFs, the `.ics` file and the reminders.
-   - `/fire T-0001` sends a trip's reminders immediately.
-   - While testing, lower `AGENT_SLA_MIN` and `NUDGE_MIN` in `wrangler.toml` to see those timers fire.
-9. Watch the logs with `npx wrangler tail`. Admin commands: `/invite @username`, `/users`, `/alltrips`, `/trip T-0001`, `/log 30`, `/jobs`, `/now`, `/fire`, `/setstatus`.
+1. `cd trip-bot && npm install`. Deploy with `npx wrangler deploy` (needs `CLOUDFLARE_API_TOKEN` / `CLOUDFLARE_ACCOUNT_ID` in the environment). Secrets already set on the Worker: `TELEGRAM_TOKEN`, `GEMINI_API_KEY`, `WEBHOOK_SECRET`, `PASSPORT_KEY`, `TRAVELPAYOUTS_TOKEN`. Never commit them.
+2. `GEMINI_MODEL` is `gemini-3.8-flash`, always (user's choice; no cheaper fallback).
+3. Before deploying a change: `npm test` (must pass), and `npm run eval` when a Gemini prompt changed (keep ≥95%).
+4. Database changes: add them to `schema.sql` and apply the same `CREATE TABLE` / `ALTER TABLE ADD COLUMN` to the live D1 through the Cloudflare connector.
+5. `/setup?key=<WEBHOOK_SECRET>` resets the webhook and the default command menus (only needed for a new bot token).
+6. Roles: `OWNER_ID` is `5503792899` (the maintainer: alerts and maintenance commands). `ADMIN_ID` = `606554606,116590869` (users; `116590869` is Azizbek, added 2026-11-05). More people: `/invite @username` or the "Give access" button.
+7. Debugging: read `chat_log` and `events` in D1 (via the connector) to see exactly what a user sent and what the bot answered; Cloudflare Workers Logs are on. Maintenance commands: `/invite @username`, `/users`, `/alltrips`, `/trip T-0001`, `/log 30`, `/jobs`, `/now`, `/fire T-0001`, `/setstatus T-0001 <status>`.
 
 ## Testing
 
-- `npm test`: 153 checks
-- `npm run eval`: 37 real messages (several from actual use) against the real Gemini; must stay at 95%+ before deploying a prompt change. Last run: 53/53. over every flow, every message validated against Telegram's rules.
+- `npm test`: 153 checks over every flow; every message is validated against Telegram's rules (`test/telegram-rules.mjs`).
+- `npm run eval`: 53 real messages (many from actual use) against the real Gemini; must stay at 95%+ before deploying a prompt change. Last run: 53/53.
 - `SCENARIO=search npm run test:live -- <voice-dir> <report.md>`: real searches (Istanbul by voice, Guangzhou with flexible dates); last run: both found real options in ~40 s and completed.
 - `npm run test:live -- <voice-dir> <report.md>`: real Gemini 3.8 Flash on a full day of use (voice notes, PDF, Uzbek and Russian). Last run: all steps worked, slowest 19.7 s, no rule violations.
 - Timing: Gemini 3.8 Flash takes 3-25 s per call (letters and the mock agent's offers are the slow ones). The webhook works up to 25 s before answering Telegram, then up to ~30 s more in `waitUntil`; Gemini calls time out at 25 s (router, parsing), 40 s (letters, translation, agent options) or 45 s (mock agent, cron); they retry once only on a quick 429/5xx.

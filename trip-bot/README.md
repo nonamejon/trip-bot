@@ -1,20 +1,16 @@
 # Trip bot
 
-Two sections: **✈️ Mening safarlarim** (travel agent, routes, bookings, documents) and **🗂 Shaxsiy kotib** (calendar, reminders, translations, letters). Uzbek or Russian.
+Two sections: **✈️ Mening safarlarim** (flight and hotel search, routes, bookings, documents) and **🗂 Shaxsiy kotib** (calendar, reminders, translations, letters). Uzbek or Russian.
 
-A Telegram assistant for Azizbek. He sends a message or voice note ("Istanbul, 12 to 15 Nov, morning flight"), approves a request card, picks one of the agent's options, and gets his tickets, a calendar file and reminders in the same chat.
+A private Telegram assistant for an executive (Azizbek) and a few people the owner gives access to. He sends a message or voice note ("Istanbul, 12 to 15 Nov, morning flight"), approves a request card, and gets three real options with Aviasales and Booking.com links; after booking, the bot keeps his ticket, a calendar file and flight reminders.
 
 It runs on one Cloudflare Worker, a D1 database and the Gemini API. There is no server to rent.
 
-## The travel agent: mock or real
+## Where trip requests go (`AGENT_MODE`)
 
-- **`AGENT_MODE = "mock"`** (the default): no real agent is involved. A fake agent answers after `MOCK_DELAY_MIN` minutes:
-  - it writes three options as free text, like a person would;
-  - about half the time it forgets the cancellation terms for one option, so you see the bot ask for them;
-  - it answers that question, then "books" and sends test PDFs.
-
-  Its replies go through the same code a real agent's messages do. The agent-group conversation is copied into your chat in italics so you can follow it.
-- **`AGENT_MODE = "group"`**: the bot talks to a real Telegram group. Add the bot to the group and type `/chatid` there to get the ID for `AGENT_CHAT_ID`. If the group has Topics turned on and the bot is an admin, set `AGENT_TOPICS = "true"` to give each trip its own topic.
+- **`"search"`** (live): no travel agent. The bot searches flights and hotels itself (Gemini with Google Search, plus real Aviasales fares from the Travelpayouts API when `TRAVELPAYOUTS_TOKEN` is set) and shows three options with booking links. He books through the links, then taps "Bron qildim" or sends the ticket.
+- **`"group"`**: a real travel agent in a Telegram group. Add the bot to the group and type `/chatid` there to get the ID for `AGENT_CHAT_ID`. If the group has Topics turned on and the bot is an admin, set `AGENT_TOPICS = "true"` to give each trip its own topic.
+- **`"mock"`**: a fake agent for testing the agent flow alone. It answers after `MOCK_DELAY_MIN` minutes, sometimes forgets a detail so the bot asks, then "books" and sends test PDFs; the conversation is copied into your chat in italics.
 
 ## Setup (about 15 minutes)
 
