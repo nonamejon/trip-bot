@@ -167,10 +167,10 @@ async function saveLetter(env, uid, request, r) {
   return { id: res.meta.last_row_id, subject: r.subject, body: r.body };
 }
 
-export async function doLetter(env, uid, chat, L, lang, request) {
+export async function doLetter(env, uid, chat, L, lang, request, name = '') {
   await send(env, chat, L.writing);
   let r;
-  try { r = await whileTyping(env, chat, () => writeLetter(env, request, lang)); }
+  try { r = await whileTyping(env, chat, () => writeLetter(env, request, lang, name)); }
   catch (e) { await reportError(env, e, 'writeLetter'); return send(env, chat, L.readFail); }
   await logEvent(env, 'owner', 'letter', null, request.slice(0, 80));
   return showLetter(env, chat, L, await saveLetter(env, uid, request, r));

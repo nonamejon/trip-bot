@@ -19,6 +19,7 @@ A private Telegram assistant in Uzbek or Russian. Roles: `OWNER_ID` is the maint
 - **Never silent:** an unexpected error sends him an apology at once (index.js `apologize`); a message whose handling was cut off (time limit) is found by the cron watchdog (`updates.done_at` still empty after 2 min) which apologizes once and alerts the maintainer. Cloudflare Workers Logs are on (`[observability]`).
 - **Errors:** alerts go to `OWNER_ID` (the maintainer; `ALERT_ID` can override), never to the admins (users). Passing glitches (D1 network blips, Gemini busy or slow) are only logged as `error_transient`; 3+ within 15 min give one warning per hour. Other errors alert at once.
 - **Memory:** both sides of the owner's chat are kept in `chat_log` (30 days; never the `/passport` text). The last 20 lines of the past 24 h go to `routeMessage` and `parseRequest`. Read `chat_log` (via the connector) to see what the bot actually said.
+- **Tone:** the main user is a top executive. Every fixed text is courteous ("siz"/"вы", "kechirasiz" where it fits; tone overrides at the end of `i18n.js`), and Gemini is told to be warm and respectful, never curt or preachy. Prompts use each person's own Telegram first name (greetings, letter signatures), never a hardcoded "Azizbek". Unset flight/hotel wishes read "belgilanmagan" / "не указан".
 - **Scope:** greetings and questions that help with trips or his work (visas, weather, time zones, currency, packing, etiquette) get a short answer (≤3 sentences) written inside the router call, so no extra Gemini call. Unrelated questions (recipes, jokes, homework, code, trivia) are intent `off_topic` and get a fixed polite text (`O.*.offTopic`), with no Gemini writing.
 - **Routing:** every free message goes through `routeMessage` (Gemini, low thinking) which picks the intent; buttons can set a "mode" (prefs.mode: translate, letter, revise, agent, flight_time, clarify) so the next message is used for that.
 
@@ -104,7 +105,7 @@ any open state -> cancelled
 ## Testing
 
 - `npm test`: 148 checks
-- `npm run eval`: 37 real messages (several from actual use) against the real Gemini; must stay at 95%+ before deploying a prompt change. Last run: 49/50 (the miss was a Gemini timeout). over every flow, every message validated against Telegram's rules.
+- `npm run eval`: 37 real messages (several from actual use) against the real Gemini; must stay at 95%+ before deploying a prompt change. Last run: 50/50. over every flow, every message validated against Telegram's rules.
 - `SCENARIO=search npm run test:live -- <voice-dir> <report.md>`: real searches (Istanbul by voice, Guangzhou with flexible dates); last run: both found real options in ~40 s and completed.
 - `npm run test:live -- <voice-dir> <report.md>`: real Gemini 3.8 Flash on a full day of use (voice notes, PDF, Uzbek and Russian). Last run: all steps worked, slowest 19.7 s, no rule violations.
 - Timing: Gemini 3.8 Flash takes 3-25 s per call (letters and the mock agent's offers are the slow ones). The webhook works up to 25 s before answering Telegram, then up to ~30 s more in `waitUntil`; Gemini calls time out at 25 s (router, parsing), 40 s (letters, translation, agent options) or 45 s (mock agent, cron); they retry once only on a quick 429/5xx.

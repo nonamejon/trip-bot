@@ -6,6 +6,7 @@ import { tinyPdf } from '../src/files.js';
 import { nextDue } from '../src/secretary.js';
 import { aviasalesUrl, fetchFares } from '../src/aviasales.js';
 import { checkTelegram } from './telegram-rules.mjs';
+import { O } from '../src/i18n.js';
 
 // ---------- fake clock ----------
 let NOW = Date.UTC(2026, 10, 2, 4, 0); // 09:00 Tashkent
@@ -337,11 +338,11 @@ n = sent.length;
 await admin2('/trips');
 assert(sent.slice(n).some((x) => x.p.chat_id === 222 && x.p.text === 'Поездок пока нет. Напишите, куда и когда вам нужно поехать.'), "an admin's /trips shows their own trips (none), not the owner's");
 await tapAs(222, `tv:${tripId}`);
-assert(sent.at(-1).method === 'answerCallbackQuery' && sent.at(-1).p.text === 'Эта кнопка устарела.', "an admin cannot open the owner's trip");
+assert(sent.at(-1).method === 'answerCallbackQuery' && sent.at(-1).p.text === O.ru.staleBtn, "an admin cannot open the owner's trip");
 for (const c of ['/alltrips', '/log', '/now', `/fire T-000${tripId}`, `/setstatus T-000${tripId} done`]) {
   n = sent.length;
   await admin2(c);
-  assert(sent.slice(n).filter((x) => x.p.chat_id === 222).every((x) => x.p.text === 'Не знаю такой команды. Нажмите /help.'), `an admin does not get the maintenance command ${c.split(' ')[0]}`);
+  assert(sent.slice(n).filter((x) => x.p.chat_id === 222).every((x) => x.p.text === O.ru.unknownCmd), `an admin does not get the maintenance command ${c.split(' ')[0]}`);
 }
 
 // ---------- Personal secretary ----------
@@ -365,7 +366,7 @@ assert(rmDaily?.due_at === localMs(1, '08:00'), 'daily reminder set for tomorrow
 await say('напомни через 20 минут позвонить Бобуру'); show('reminder in 20 minutes');
 const rm20 = sqlite.prepare(`SELECT * FROM user_reminders WHERE text = 'Позвонить Бобуру'`).get();
 await say('kecha 9 da hisobotni eslat'); show('reminder in the past');
-assert(lastText() === 'Bu vaqt oʻtib ketgan. Qaysi vaqtga qoʻyay?' && mode() === 'clarify', 'a time in the past is questioned');
+assert(lastText() === O.uz.reminderPast && mode() === 'clarify', 'a time in the past is questioned');
 await say('/menu');
 assert(mode() === null, 'a command clears a pending question');
 
@@ -424,7 +425,7 @@ await say('rahmat'); show('small talk');
 assert(lastText() === 'Arzimaydi!', 'small talk answered');
 const callsBefore = geminiCalls.length;
 await say('pitsa retseptini ayt'); show('off-topic question');
-assert(lastText().startsWith('Bu savolga javob bera olmayman') && !lastText().includes('xamir') && geminiCalls.length === callsBefore + 1, 'an unrelated question gets the fixed answer, with no extra Gemini call');
+assert(lastText() === O.uz.offTopic && !lastText().includes('xamir') && geminiCalls.length === callsBefore + 1, 'an unrelated question gets the fixed answer, with no extra Gemini call');
 
 await tap('cl'); show('phone calendar link');
 const feedUrl = lastText().match(/https:\/\/bot\.example\/cal\/111\/[0-9a-f]{32}\.ics/)?.[0];
@@ -528,7 +529,7 @@ assert(sent.filter((x) => (x.p.text || '').startsWith('Kechirasiz, oxirgi')).len
 // access: the owner approves a new person with a button; admins cannot
 const tapAs2 = (who, data) => update({ callback_query: { id: 'cq' + updateId, from: { id: who, is_bot: false }, data, message: { message_id: msgId, chat: { id: who } } } });
 await tapAs2(222, 'ma:999');
-assert(!sqlite.prepare('SELECT 1 FROM members WHERE telegram_id = 999').get() && sent.at(-1).p.text === 'Нет доступа.', 'an admin cannot give access');
+assert(!sqlite.prepare('SELECT 1 FROM members WHERE telegram_id = 999').get() && sent.at(-1).p.text === O.ru.notAllowed, 'an admin cannot give access');
 await tap('ma:999'); show('owner gives access');
 assert(sqlite.prepare('SELECT username FROM members WHERE telegram_id = 999').get()?.username === 'quvonchbek_test', 'access given, stored with the username');
 assert(sent.some((x) => x.p.chat_id === 999 && JSON.stringify(x.p.reply_markup || '').includes('lg:uz')), 'the new person gets the language picker');
@@ -536,7 +537,7 @@ await tapAs2(999, 'lg:uz');
 await update({ message: { message_id: ++msgId, from: { id: 999, is_bot: false }, chat: { id: 999, type: 'private' }, text: '/today' } });
 assert(sent.filter((x) => x.p.chat_id === 999).at(-1).p.text.includes('rejalar yoʻq'), 'the new person uses the assistant (own empty calendar)');
 await update({ message: { message_id: ++msgId, from: { id: 999, is_bot: false }, chat: { id: 999, type: 'private' }, text: '/log' } });
-assert(sent.filter((x) => x.p.chat_id === 999).at(-1).p.text === 'Bunday buyruqni bilmayman. /help ni bosing.', 'but has no maintenance commands');
+assert(sent.filter((x) => x.p.chat_id === 999).at(-1).p.text === O.uz.unknownCmd, 'but has no maintenance commands');
 await say('/users'); show('/users');
 assert(lastText().includes('@quvonchbek_test') && lastKb().includes('mr:999'), '/users lists approved people with a remove button');
 await tap('mr:999');

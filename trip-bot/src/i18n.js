@@ -47,7 +47,7 @@ export const O = {
     menu: ['Yangi safar', 'Safarlarim', 'Holat'],
     route: 'Yoʻnalish', dates: 'Sanalar', travelers: 'Yoʻlovchilar', flight: 'Parvoz', baggage: 'Bagaj', hotel: 'Mehmonxona', budget: 'Byudjet', notes: 'Izoh',
     nights: (n) => `${n} kecha`,
-    noPref: 'farqi yoʻq', notSet: 'belgilanmagan', notStated: 'koʻrsatilmagan', origin: 'Toshkent',
+    noPref: 'belgilanmagan', notSet: 'belgilanmagan', notStated: 'koʻrsatilmagan', origin: 'Toshkent',
     checkTitle: 'Soʻrovingizni tekshiring',
     passportNote: 'Pasportingiz siz variant tanlamaguningizcha shifrlangan holda saqlanadi.',
     nOptions: (n) => `${n} ta variant`,
@@ -121,7 +121,7 @@ export const O = {
     menu: ['Новая поездка', 'Мои поездки', 'Статус'],
     route: 'Маршрут', dates: 'Даты', travelers: 'Пассажиры', flight: 'Перелёт', baggage: 'Багаж', hotel: 'Отель', budget: 'Бюджет', notes: 'Примечания',
     nights: (n) => `${n} ${plural(n, ['ночь', 'ночи', 'ночей'])}`,
-    noPref: 'без предпочтений', notSet: 'не указан', notStated: 'не указано', origin: 'Ташкент',
+    noPref: 'не указан', notSet: 'не указан', notStated: 'не указано', origin: 'Ташкент',
     checkTitle: 'Проверьте заявку',
     passportNote: 'Паспорт хранится в зашифрованном виде, пока вы не выберете вариант.',
     nOptions: (n) => `${n} ${plural(n, ['вариант', 'варианта', 'вариантов'])}`,
@@ -194,7 +194,7 @@ export const O = {
 export const A = {
   uz: {
     request: 'SOʻROV', route: 'Yoʻnalish', dates: 'Sanalar', travelers: 'Yoʻlovchilar', flight: 'Parvoz', baggage: 'Bagaj', hotel: 'Mehmonxona', budget: 'Byudjet', notes: 'Izoh',
-    nights: (n) => `${n} kecha`, noPref: 'farqi yoʻq', notSet: 'belgilanmagan', origin: 'Toshkent',
+    nights: (n) => `${n} kecha`, noPref: 'belgilanmagan', notSet: 'belgilanmagan', origin: 'Toshkent',
     ask: 'Iltimos, har bir variantni alohida yozing: reyslar, bagaj normasi, mehmonxona, umumiy narx, bekor qilish shartlari.',
     baggageAsk: 'aytilmagan — har bir variantda bagaj normasini yozing',
     note: (code) => `Azizbekdan ${code} boʻyicha izoh:`, fileAttached: '(fayl biriktirilgan)',
@@ -217,7 +217,7 @@ export const A = {
   },
   ru: {
     request: 'ЗАЯВКА', route: 'Маршрут', dates: 'Даты', travelers: 'Пассажиры', flight: 'Перелёт', baggage: 'Багаж', hotel: 'Отель', budget: 'Бюджет', notes: 'Примечания',
-    nights: (n) => `${n} ${plural(n, ['ночь', 'ночи', 'ночей'])}`, noPref: 'без предпочтений', notSet: 'не указан', origin: 'Ташкент',
+    nights: (n) => `${n} ${plural(n, ['ночь', 'ночи', 'ночей'])}`, noPref: 'не указан', notSet: 'не указан', origin: 'Ташкент',
     ask: 'Пожалуйста, опишите каждый вариант отдельно: перелёты, норма багажа, отель, общая стоимость, условия отмены.',
     baggageAsk: 'не указан — укажите норму багажа в каждом варианте',
     note: (code) => `Комментарий Азизбека по ${code}:`, fileAttached: '(файл приложен)',
@@ -489,3 +489,47 @@ Object.assign(O.ru, {
 // Questions unrelated to trips or his work: a fixed, polite answer (no Gemini text)
 O.uz.offTopic = 'Bu savolga javob bera olmayman — men safarlar va ish yordamchisiman. Yordam bera olaman: ✈️ safar va reys qidirish, 📅 uchrashuvlar va eslatmalar, 🌐 tarjima, ✉️ xat yozish. Safarlaringiz bilan bogʻliq savollar (viza, ob-havo, valyuta va h.k.) ham boʻlsa, bemalol soʻrang.';
 O.ru.offTopic = 'На этот вопрос не отвечу — я помощник по поездкам и работе. Могу помочь: ✈️ найти рейс и отель, 📅 встречи и напоминания, 🌐 перевод, ✉️ письма. Вопросы о поездках (виза, погода, валюта и т.п.) — тоже пожалуйста.';
+
+// Tone: the main user is a top executive. Every fixed text is courteous ("siz" / "вы"), never curt.
+Object.assign(O.uz, {
+  staleBtn: 'Bu tugma endi amal qilmaydi — kechirasiz.',
+  unknownCmd: 'Kechirasiz, bunday buyruq menda yoʻq. Barcha imkoniyatlarni /help orqali koʻrishingiz mumkin.',
+  chatFallback: 'Kechirasiz, fikringizni toʻliq tushuna olmadim. Safar, uchrashuv, eslatma, tarjima yoki xat haqida yozsangiz, darhol yordam beraman.',
+  readFail: 'Kechirasiz, xabaringizni hozir oʻqiy olmadim. Bir daqiqadan soʻng yana yuborsangiz, albatta koʻrib chiqaman.',
+  nothingToTranslate: 'Tarjima qilishim kerak boʻlgan matn yoki faylni yuborsangiz kifoya.',
+  ticketNoTrip: 'Kechirasiz, bu hujjat qaysi safarga tegishli ekanini aniqlay olmadim. Chiptani aniqroq rasm yoki PDF koʻrinishida yuborsangiz, darhol qoʻshib qoʻyaman.',
+  ticketNoTime: 'Kechirasiz, hujjatdan reys vaqtini oʻqiy olmadim — vaqtni quyidagi tugma orqali kiritib qoʻysangiz boʻladi.',
+  reminderPast: 'Bu vaqt allaqachon oʻtib ketgan. Eslatmani qaysi vaqtga qoʻyib beray?',
+  noTrip: 'Hozircha faol safaringiz yoʻq.',
+  noCancel: 'Hozircha bekor qilinadigan safaringiz yoʻq.',
+  canRead: 'Matn, ovozli xabar, audio, dumaloq video, rasm yoki PDF yuborishingiz mumkin — barchasini tushunaman.',
+  tooLarge: 'Kechirasiz, bu fayl juda katta. 15 MB dan kichikroq fayl yuborsangiz, darhol koʻrib chiqaman.',
+  optionGone: 'Kechirasiz, bu variant endi mavjud emas.',
+  letterGone: 'Kechirasiz, bu xatni topa olmadim.',
+  offTopic: 'Kechirasiz, bu masalada yordam bera olmayman — men safarlaringiz va ish rejalaringiz boʻyicha yordamchiman. Siz uchun reys va mehmonxona topishim, uchrashuv va eslatmalarni rejalashtirishim, matnlarni tarjima qilishim va xatlar tayyorlashim mumkin. Safar bilan bogʻliq savollaringiz (viza, ob-havo, valyuta) boʻlsa, mamnuniyat bilan javob beraman.',
+  flightTimeBad: 'Kechirasiz, sana va vaqtni aniqlay olmadim. Masalan, «12-noyabr 07:40» shaklida yozsangiz boʻladi.',
+  noAgentNote: 'Bronga oʻzgartirish kiritish uchun uni rasmiylashtirgan saytdan foydalanishingiz kerak boʻladi.',
+  searchFailed: 'Kechirasiz, hozir variantlarni topa olmadim. Birozdan soʻng qayta urinib koʻrsak boʻladi.',
+  notAllowed: 'Kechirasiz, bu amal siz uchun mavjud emas.',
+});
+Object.assign(O.ru, {
+  staleBtn: 'Эта кнопка уже неактуальна — извините.',
+  unknownCmd: 'Извините, такой команды у меня нет. Все возможности — в /help.',
+  chatFallback: 'Извините, я не совсем понял. Напишите о поездке, встрече, напоминании, переводе или письме — сразу помогу.',
+  readFail: 'Извините, не удалось прочитать сообщение. Отправьте его ещё раз через минуту — обязательно разберу.',
+  nothingToTranslate: 'Пришлите, пожалуйста, текст или файл для перевода.',
+  ticketNoTrip: 'Извините, не смог определить, к какой поездке относится документ. Пришлите билет более чётким фото или PDF — сразу добавлю.',
+  ticketNoTime: 'Извините, не смог прочитать время рейса — его можно указать кнопкой ниже.',
+  reminderPast: 'Это время уже прошло. На какое время поставить напоминание?',
+  noTrip: 'Сейчас активных поездок нет.',
+  noCancel: 'Сейчас нет поездок для отмены.',
+  canRead: 'Можно присылать текст, голосовые, аудио, видеокружки, фото и PDF — я всё пойму.',
+  tooLarge: 'Извините, файл слишком большой. Пришлите, пожалуйста, файл до 15 МБ.',
+  optionGone: 'Извините, этот вариант больше недоступен.',
+  letterGone: 'Извините, не нашёл это письмо.',
+  offTopic: 'Извините, с этим помочь не смогу — я ваш помощник по поездкам и рабочим делам. Могу найти рейс и отель, запланировать встречи и напоминания, перевести текст и подготовить письмо. С вопросами о поездках (виза, погода, валюта) — с удовольствием помогу.',
+  flightTimeBad: 'Извините, не смог определить дату и время. Например, напишите «12 ноября 07:40».',
+  noAgentNote: 'Чтобы изменить бронь, воспользуйтесь сайтом, где она оформлена.',
+  searchFailed: 'Извините, сейчас не удалось найти варианты. Попробуем ещё раз чуть позже.',
+  notAllowed: 'Извините, это действие вам недоступно.',
+});

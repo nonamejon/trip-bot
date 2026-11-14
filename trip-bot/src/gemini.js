@@ -81,7 +81,7 @@ const REQUEST_SCHEMA = {
 // history: the recent conversation (util.recentChat), so earlier answers and the bot's questions are known.
 export function parseRequest(env, draft, text, media, lang = 'uz', history = '') {
   const S = style(lang);
-  const prompt = `You are the parsing step of a Telegram travel assistant for one executive, Azizbek, based in Tashkent. ${nowLine(env)}
+  const prompt = `You are the parsing step of a Telegram travel assistant for a senior executive based in Tashkent. ${nowLine(env)}
 He writes or speaks in Uzbek, Russian or English, sometimes mixed.${media.length ? ' His message includes the attached file (a voice note, photo or document); read or transcribe it.' : ''}
 
 Recent conversation with the bot, oldest first (the bot's lines show what it already understood and what it asked):
@@ -192,7 +192,7 @@ export function routeMessage(env, text, media, ctx) {
   const L = LANG_NAME[ctx.lang] || LANG_NAME.uz;
   const hist = ctx.history ? `Recent conversation with the bot, oldest first:\n"""${ctx.history}"""\n` : '';
   const trip = ctx.trip ? `His current trip: ${ctx.trip.code} to ${ctx.trip.destination || '(destination not given yet)'}, status "${ctx.trip.status}" (collecting = the bot is still asking him for trip details; draft = waiting for his approval; sent/offers/chosen/booked = the travel agent is working on it).` : 'He has no trip in progress.';
-  const prompt = `You route messages for a Telegram assistant of one executive, Azizbek, based in Tashkent. It is his travel assistant and personal secretary.
+  const prompt = `You route messages for a Telegram assistant of a senior executive${ctx.name ? ` named ${ctx.name}` : ''}, based in Tashkent. It is his travel assistant and personal secretary.
 ${nowLine(env)}
 He writes or speaks in Uzbek, Russian or English, sometimes mixed.${media.length ? ' His message includes the attached file (voice note, photo or document); listen to it or read it.' : ''}
 ${trip}
@@ -226,7 +226,7 @@ letter: lt_request = everything he said about the letter (recipient, purpose, de
 agenda: ag_from and ag_to "YYYY-MM-DD" (today if he does not say).
 Resolve relative dates and times from now, in Tashkent time.
 question: if an event or reminder has no date or time you can work out, one short question in ${L} asking only for that; else null.
-reply: for chat only, a short answer in ${L}: at most 3 sentences, no lists; for facts that change (visa rules, prices) say to check the official source. Else null.`;
+reply: for chat only, a short answer in ${L}: at most 3 sentences, no lists. Tone: he is a very senior executive; always warm, respectful and courteous, ${ctx.lang === 'ru' ? 'addressing him with "вы"' : 'addressing him with "siz"'}; never curt, sarcastic, preachy or lecturing; for facts that change (visa rules, prices) say to check the official source. Else null.`;
   return gemini(env, { prompt, media, schema: ROUTE_SCHEMA, thinking: 'low', timeoutMs: 25000 });
 }
 
@@ -248,19 +248,20 @@ Return JSON: source_lang (ISO code), target_lang (ISO code), translation.`;
 // ---------- 6. Letters ----------
 const LETTER_SCHEMA = { type: 'OBJECT', properties: { subject: S(), body: { type: 'STRING' }, lang: S() }, required: ['body'] };
 
-export function writeLetter(env, request, ownerLang) {
-  const prompt = `You are the personal secretary of Azizbek, an executive based in Tashkent. Draft the letter he asks for.
+// name: his name as it should be signed (from his Telegram profile).
+export function writeLetter(env, request, ownerLang, name = '') {
+  const prompt = `You are the personal secretary of ${name || 'a senior executive'}, an executive based in Tashkent. Draft the letter he asks for.
 His request: """${request}"""
 ${nowLine(env)}
 Write it in the language he asks for; if he does not say, in ${LANG_NAME[ownerLang] || LANG_NAME.uz}. Use the tone that fits the recipient (official, business or friendly).
-Ready to send: a greeting, a clear body, a polite closing and his name "Azizbek" (add a surname only if he gives one). Where a fact you need is missing, write a short placeholder in square brackets, like [sana].
+Ready to send: a greeting, a clear body, a polite closing and ${name ? `his name "${name}"` : 'a placeholder for his name, [ism]'} (add a surname only if he gives one). Where a fact you need is missing, write a short placeholder in square brackets, like [sana].
 Plain text, no markdown.
 Return JSON: subject (a short subject line, or null for a personal message), body, lang (ISO code).`;
   return gemini(env, { prompt, schema: LETTER_SCHEMA, temperature: 0.5, timeoutMs: 40000 });
 }
 
 export function reviseLetter(env, letter, instruction) {
-  const prompt = `You are the personal secretary of Azizbek. Here is a letter you drafted:
+  const prompt = `You are the personal secretary of a senior executive. Here is a letter you drafted:
 Subject: ${letter.subject || '(none)'}
 """${letter.body}"""
 

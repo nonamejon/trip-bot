@@ -245,7 +245,7 @@ export async function handleOwnerMessage(env, msg) {
   // Otherwise Gemini decides what the message is for.
   const t = await activeTrip(env, uid);
   let r;
-  try { r = await whileTyping(env, chat, () => routeMessage(env, text, media, { lang, trip: t && { code: t.code, status: t.status, destination: t.fields.destination }, pending: mode?.arg || null, history })); }
+  try { r = await whileTyping(env, chat, () => routeMessage(env, text, media, { lang, trip: t && { code: t.code, status: t.status, destination: t.fields.destination }, pending: mode?.arg || null, history, name: msg.from.first_name || null })); }
   catch (e) {
     await reportError(env, e, 'routeMessage');
     // While a trip request is being filled in, a message that could not be routed is most likely part of it.
@@ -311,7 +311,7 @@ export async function handleOwnerMessage(env, msg) {
       const src = r.tr_text || (isVoice ? r.transcript : null);
       return doTranslate(env, chat, L, lang, src, src ? [] : media, r.tr_target);
     }
-    case 'letter': return doLetter(env, uid, chat, L, lang, r.lt_request || said);
+    case 'letter': return doLetter(env, uid, chat, L, lang, r.lt_request || said, msg.from.first_name);
     case 'agenda': {
       const from = isDate(r.ag_from) ? r.ag_from : localISODate(env);
       let to = isDate(r.ag_to) && r.ag_to >= from ? r.ag_to : from;
@@ -337,7 +337,7 @@ async function handleMode(env, msg, uid, chat, L, lang, mode, text, media, isVoi
   }
   await clearMode(env, uid);
   switch (mode.mode) {
-    case 'letter': return said ? doLetter(env, uid, chat, L, lang, said) : send(env, chat, L.letterAsk);
+    case 'letter': return said ? doLetter(env, uid, chat, L, lang, said, msg.from.first_name) : send(env, chat, L.letterAsk);
     case 'revise': return said ? doRevise(env, uid, chat, L, +mode.arg, said) : send(env, chat, L.reviseAsk);
     case 'agent': {
       const t = await getTrip(env, +mode.arg);
