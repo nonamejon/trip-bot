@@ -133,7 +133,7 @@ const OFFERS_SCHEMA = {
       },
     },
     recommended: { type: 'INTEGER', nullable: true },
-    reason: S(),
+    reason: S(), note: S(),
     origin_en: S(), destination_en: S(), area_en: S(), origin_iata: S(), destination_iata: S(),
   },
   required: ['offers'],
@@ -153,6 +153,7 @@ offers: every option the agent gave, in order, each with label (${S.labels}), ai
 origin_iata, destination_iata: 3-letter IATA city codes of the cities the flights go between; origin_en, destination_en: the origin and destination cities in English; area_en: the area where he wants to stay, in English (e.g. "Levent, Istanbul"), or the destination city.
 recommended: index (0-based) of the best fit for the request: his wishes on flight time and hotel location first, then flexibility, then price.
 reason: one short sentence saying why.
+note: the agent's remark about the options as a whole (a "Note:" line: only one airline flies this route that day, a nearby day is cheaper, what was adapted), in one or two short sentences, keeping any alternatives it names (other hotels, other days) with their prices; else null.
 Write all free-text values in ${S.name}; keep airline names, flight numbers and hotel names as they are.
 Use only what the agent wrote; anything not stated stays null or "unknown". If there are no options in the text, return offers: [].`;
   return gemini(env, { prompt, media, schema: OFFERS_SCHEMA, timeoutMs: 40000 });

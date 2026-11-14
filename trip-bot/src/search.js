@@ -35,12 +35,13 @@ export async function queueSearch(env, t, payload = {}) {
 
 // ---------- the search ----------
 // fares: real Aviasales fares (fetchFares), or [] when the Travelpayouts token is not set.
-function searchPrompt(env, t, payload, fares = []) {
+export function searchPrompt(env, t, payload, fares = []) {
   const f = t.fields;
   const today = new Date(Date.now() + (Number(env.TZ_OFFSET_MIN) || 0) * 60e3).toISOString().slice(0, 10);
-  // No return date and no flexible window: search one way, and no hotel (the number of nights is unknown).
+  // No return date and no flexible window: one-way flights. A hotel is still offered (priced per night) unless he
+  // said he wants a one-way ticket only or no hotel.
   const oneWay = !!f.one_way || (!isDate(f.date_to) && !f.date_flex && isDate(f.date_from));
-  const wantsHotel = !oneWay && !/mehmonxona kerak emas|отель не нужен|no hotel/i.test(`${f.hotel || ''} ${f.notes || ''}`);
+  const wantsHotel = !f.one_way && !/mehmonxona kerak emas|отель не нужен|no hotel/i.test(`${f.hotel || ''} ${f.notes || ''}`);
   return `You are a travel agent in Tashkent searching for your client. Today is ${today}. Use Google Search to find real, currently scheduled options.
 
 The request (JSON): ${JSON.stringify({ from: f.origin, to: f.destination, date_from: f.date_from, date_to: f.date_to, flexible_dates: f.date_flex, one_way: oneWay, travelers: f.travelers || 1, flight_wishes: f.flight_pref, baggage: f.baggage, hotel_wishes: f.hotel, budget: f.budget, notes: f.notes })}
@@ -48,8 +49,13 @@ ${payload.note ? `His new wish: """${payload.note}"""` : ''}
 ${payload.previous ? `He has seen these options and wants different ones: ${payload.previous}` : ''}
 
 ${fares.length ? `Real fares found on Aviasales for this request (JSON; times local; "price" is USD per person, "price_total" is USD for all ${f.travelers || 1} traveler(s)): ${JSON.stringify(fares)}
-Build the 3 flight options from these fares: use exactly their flights and times, "price_total" as the flight price, and each fare's "link" as its booking URL. Use Google Search only to add details (airline name, baggage allowance, fare rules) and the hotels.
-` : ''}Write 3 options numbered 1) 2) 3), making them differ (the cheapest, the best timing, the most comfortable). For each option:
+Build the flight options from these fares: use exactly their flights and times, "price_total" as the flight price, and each fare's "link" as its booking URL. Use Google Search to add details (airline name, baggage allowance, fare rules), the hotels, and real alternatives when the fares hold fewer than 3 different flights.
+` : ''}Write up to 3 options numbered 1) 2) 3) that are really different flights (another airline, departure time, routing or date): the cheapest, the best timing, the most comfortable. Never repeat the same flight to fill the list.
+- If there are fewer than 3 different flights for his date, add real alternatives you find: another airline, a connection, or a day or two earlier or later (state its date; its price is approximate).
+- If fewer real options exist, give only those, even just one. With a single flight, give one option with the best-fitting hotel and name up to two other hotels in the note.
+- Whenever the request does not fit this format, use your judgement and adapt rather than force it: no invented flights, no padding.
+- Start with one line "Note: ..." if he should know something about the options as a whole (only one airline flies this route that day, a nearby day is much cheaper, what you adapted and why); leave it out otherwise.
+For each option:
 - airline and flight numbers; exact dates and local departure and arrival times for the outbound${oneWay ? '' : ' and the return'} flight; direct, or where the connection is;
 - the baggage allowance of that fare;
 - the approximate total price in USD for all travelers${wantsHotel ? ', flights and hotel separately' : ''} (say it is approximate);

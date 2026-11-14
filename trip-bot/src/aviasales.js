@@ -47,12 +47,16 @@ export async function fetchFares(env, f) {
   if (flexible) data = await query(month(f.window_from), month(f.window_to || f.window_from));
   else {
     data = await query(f.date_from, f.date_to);
-    // The cache has no fare for the exact dates: take the month and keep the closest dates (within 3 days each way).
-    if (!data.length) {
+    // Fewer than 3 different flights on the exact dates (often just one): add the closest dates in that month
+    // (within 3 days each way) as alternatives, after the exact-date fares.
+    const flightKey = (d) => `${d.airline}${d.flight_number}${String(d.departure_at).slice(0, 16)}`;
+    if (new Set(data.map(flightKey)).size < 3) {
       const near = (a, b) => Math.abs(Date.parse(a.slice(0, 10)) - Date.parse(b)) / 864e5;
-      data = (await query(month(f.date_from), oneWay ? null : month(f.date_to)))
-        .filter((d) => near(d.departure_at, f.date_from) <= 3 && (oneWay || !d.return_at || near(d.return_at, f.date_to) <= 3))
+      const seen = new Set(data.map(flightKey));
+      const more = (await query(month(f.date_from), oneWay ? null : month(f.date_to)).catch(() => []))
+        .filter((d) => near(d.departure_at, f.date_from) <= 3 && (oneWay || !d.return_at || near(d.return_at, f.date_to) <= 3) && !seen.has(flightKey(d)))
         .sort((a, b) => near(a.departure_at, f.date_from) - near(b.departure_at, f.date_from) || a.price - b.price);
+      data = [...data, ...more];
     }
   }
   const n = Math.min(Math.max(Number(f.travelers) || 1, 1), 9);

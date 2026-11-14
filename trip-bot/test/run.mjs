@@ -33,6 +33,8 @@ const env = {
 };
 
 // ---------- fake Telegram + Gemini ----------
+const faresQueries = [];
+let dupOffers = false;
 let lastGeminiMime = null, lastParsePrompt = '', lastSearchPrompt = '', failSearch = 0, lastFaresQuery = null;
 let ticketDepart = '2026-11-12T09:15', ticketBack = '2026-11-15T21:05';
 let msgId = 100, offersRound = 0, failNextGemini = false;
@@ -109,6 +111,7 @@ globalThis.fetch = async (url, init = {}) => {
         o[2] = { ...o[2], total_price: null, flight_price: 300, hotel_price_night: 50, date_out: '2026-12-12', date_back: '2026-12-15' };
       }
       out = { offers: o, recommended: 0, reason: 'Morning direct flight, hotel next to the meeting, and fully refundable.', origin_en: 'Tashkent', destination_en: 'Istanbul', area_en: 'Levent, Istanbul' };
+      if (dupOffers) { o[1] = { ...o[0], label: 'Option 2' }; o[2] = { ...o[0], label: 'Option 3' }; out = { ...out, offers: o, recommended: 2, note: 'Bu kuni faqat bitta reys bor.' }; }
     } else if (prompt.startsWith('Transcribe')) {
       geminiCalls.push('transcribe'); out = { transcript: 'what is the status' };
     } else throw new Error('Unexpected Gemini prompt: ' + prompt.slice(0, 80));
@@ -116,7 +119,7 @@ globalThis.fetch = async (url, init = {}) => {
     return new Response(JSON.stringify({ candidates: [{ content: { parts: [{ text }] } }] }));
   }
   if (url.startsWith('https://api.travelpayouts.com/aviasales/v3/prices_for_dates')) {
-    lastFaresQuery = new URL(url).searchParams;
+    lastFaresQuery = new URL(url).searchParams; faresQueries.push(lastFaresQuery);
     const dep = lastFaresQuery.get('departure_at'); // like the real API: an exact date only matches that day
     return new Response(JSON.stringify({ success: true, data: [
       { origin: 'TAS', destination: 'IST', price: 412, airline: 'HY', flight_number: '271', departure_at: '2026-11-12T07:40:00+05:00', return_at: '2026-11-15T12:30:00+03:00', transfers: 0, return_transfers: 0, duration_to: 320, link: '/search/TAS1211IST15111?t=HY1' },
@@ -483,7 +486,7 @@ assert(lastText().startsWith('🔎') && sqlite.prepare(`SELECT COUNT(*) c FROM j
 await cron(); show('cron: search');
 assert(geminiCalls.includes('search+google') && status().status === 'offers', 'search runs with Google Search and shows options (no clarification round)');
 assert(lastText().includes('aviasales.uz/search/TAS1212IST15121?marker=12345') && lastText().includes('uzairways.com') && lastText().includes('booking.com') && !lastText().includes('google.com'), 'options link to Aviasales (with the affiliate marker), the airline, the hotel and Booking.com');
-assert(lastSearchPrompt.includes('Real fares found on Aviasales') && lastSearchPrompt.includes('"price":412') && lastFaresQuery.get('origin') === 'TAS' && lastFaresQuery.get('destination') === 'IST' && lastFaresQuery.get('return_at') === '2026-11-15', 'with a Travelpayouts token the search is built from real Aviasales fares');
+assert(lastSearchPrompt.includes('Real fares found on Aviasales') && lastSearchPrompt.includes('"price":412') && faresQueries.some((q) => q.get('origin') === 'TAS' && q.get('destination') === 'IST' && q.get('departure_at') === '2026-11-12' && q.get('return_at') === '2026-11-15'), 'with a Travelpayouts token the search is built from real Aviasales fares');
 assert(lastText().includes('Aviasales’dan'), 'the card says the prices come from Aviasales');
 assert(!lastText().includes('turkishairlines.com'), 'a bare home page (airline site with nothing filled in) is not shown');
 assert(lastText().includes('450 USD (✈️ 300 + 🏨 50/kecha)') && !/narxi nomaʼlum \(/.test(lastText()), 'only flight and hotel prices given: the total is computed (no "price unknown" next to prices)');
@@ -668,6 +671,15 @@ assert(nearFares.length === 1 && nearFares[0].depart === '2026-11-12T07:40', 'ex
   ticketDepart = '2027-01-10T08:00'; ticketBack = '2027-01-14T19:00';
   await update({ message: { message_id: ++msgId, from: owner, chat: { id: 111, type: 'private' }, caption: 'chiptam', document: { file_id: 'TICKET9', file_name: 't9.pdf', mime_type: 'application/pdf', file_size: 30000 } } });
   assert(sqlite.prepare('SELECT flight_at FROM trips WHERE id = ?').get(ob).flight_at === obRow.flight_at && status().id !== ob && status().status === 'booked', "a ticket that matches none of his trips does not change the booked one");
+  env.AGENT_MODE = 'mock';
+}
+// the same flight three times (one fare that day) is shown once, with the search's note
+{
+  env.AGENT_MODE = 'search';
+  sqlite.prepare(`UPDATE trips SET status = 'done' WHERE status IN ('collecting', 'draft', 'sent', 'offers', 'chosen', 'booked')`).run();
+  await say('Istanbul again please, same as before, 23 kg'); const du = status().id;
+  dupOffers = true; await tap(`ap:${du}`); await cron(); dupOffers = false; show('duplicate options');
+  assert(status().status === 'offers' && JSON.parse(sqlite.prepare('SELECT offers FROM trips WHERE id = ?').get(du).offers).length === 1 && lastText().includes('Bu kuni faqat bitta reys bor') && lastText().startsWith('<b>1 ta variant'), 'identical options are shown once, with the note');
   env.AGENT_MODE = 'mock';
 }
 // cron runs that overlap send a reminder once

@@ -113,6 +113,7 @@ function draftText(L, lang, t) {
 
 function compareText(env, L, lang, t) {
   const out = [`<b>${L.nOptions(t.offers.length)} · ${esc(t.fields.destination)}</b> · ${t.code}`];
+  if (t.fields.offers_note) out.push('', `ℹ️ <i>${esc(t.fields.offers_note)}</i>`);
   t.offers.forEach((o, i) => {
     out.push('', `<b>${esc(o.label)}</b> · ${esc(money(o, lang))}${priceSplit(L, o)}${i === t.recommended ? ` · <u>${L.recommended}</u>` : ''}`,
       `${L.flight}: ${esc([o.airline, o.outbound, o.stops].filter(Boolean).join(' · ') || L.notStated)}`,
@@ -128,8 +129,10 @@ function compareText(env, L, lang, t) {
 }
 
 // "(✈️ 378 + 🏨 85/kecha)": the flight alone matches the Aviasales link; the total also has the hotel.
-const priceSplit = (L, o) => (o.flight_price != null && o.flight_price !== o.total_price
-  ? ` (✈️ ${Math.round(o.flight_price)}${o.hotel_price_night != null ? ` + 🏨 ${Math.round(o.hotel_price_night)}${L.perNight}` : ''})` : '');
+// When the number of nights is unknown (no return date) the total is the flight alone: "164 USD (✈️ + 🏨 37/kecha)".
+const priceSplit = (L, o) => (o.flight_price == null ? ''
+  : o.flight_price !== o.total_price ? ` (✈️ ${Math.round(o.flight_price)}${o.hotel_price_night != null ? ` + 🏨 ${Math.round(o.hotel_price_night)}${L.perNight}` : ''})`
+  : o.hotel_price_night != null ? ` (✈️ + 🏨 ${Math.round(o.hotel_price_night)}${L.perNight})` : ''); 
 
 // Booking links of an option: Aviasales (that fare, or a search for its dates), the airline's page, the hotel, Booking.com.
 // An Aviasales fare link opens that fare for one adult; for 2+ travelers the search link (with the passenger count) is used.
@@ -849,7 +852,13 @@ export async function handleAgentText(env, t, text, media) {
     await reportError(env, e, 'parseOffers'); return sendLong(env, t.owner_id, `${L.agentUnreadable(t.code)}\n${esc(text || L.file)}`);
   }
 
-  const offers = Array.isArray(r.offers) ? r.offers.slice(0, 5) : [];
+  // The same flight with the same hotel twice is one option (Gemini sometimes pads the list).
+  const sameKey = (o) => [o.airline, o.outbound_datetime || o.outbound, o.date_back, o.return, o.hotel].map((x) => String(x || '').toLowerCase().replace(/\s+/g, '')).join('|');
+  const kept = [];
+  (Array.isArray(r.offers) ? r.offers : []).forEach((o, i) => { if (!kept.some((k) => sameKey(k.o) === sameKey(o))) kept.push({ o, i }); });
+  const offers = kept.slice(0, 5).map((k) => k.o);
+  if (offers.length < (r.offers || []).length) offers.forEach((o, i) => { o.label = L.optionLabel(i + 1); }); // no gaps after removing one
+  if (Number.isInteger(r.recommended)) r.recommended = kept.slice(0, 5).findIndex((k) => k.i === r.recommended);
   if (!offers.length) {
     if (isSearch(env)) throw new Error('search found no usable options');
     return sendLong(env, t.owner_id, `<b>${L.agentWrote}</b> · ${t.code}\n${esc(text || L.file)}`);
@@ -864,8 +873,9 @@ export async function handleAgentText(env, t, text, media) {
       o.total_price = Math.round(o.flight_price + (o.hotel_price_night != null && n ? o.hotel_price_night * n : 0));
     }
   }
-  t.recommended = Number.isInteger(r.recommended) && offers[r.recommended] ? r.recommended : null;
+  t.recommended = offers.length > 1 && Number.isInteger(r.recommended) && offers[r.recommended] ? r.recommended : null;
   t.reason = r.reason || null;
+  t.fields.offers_note = r.note || null;
 
   const A = AL(env);
   const gaps = [];
