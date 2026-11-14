@@ -485,3 +485,7 @@ Object.assign(O.ru, {
   btnFinishTrip: '✅ Поездка состоялась (без напоминаний)',
   tripFinished: (code, dest) => `Хорошо, поездка ${dest} (${code}) завершена — больше не напоминаю. Хорошей дороги!`,
 });
+
+// Questions unrelated to trips or his work: a fixed, polite answer (no Gemini text)
+O.uz.offTopic = 'Bu savolga javob bera olmayman — men safarlar va ish yordamchisiman. Yordam bera olaman: ✈️ safar va reys qidirish, 📅 uchrashuvlar va eslatmalar, 🌐 tarjima, ✉️ xat yozish. Safarlaringiz bilan bogʻliq savollar (viza, ob-havo, valyuta va h.k.) ham boʻlsa, bemalol soʻrang.';
+O.ru.offTopic = 'На этот вопрос не отвечу — я помощник по поездкам и работе. Могу помочь: ✈️ найти рейс и отель, 📅 встречи и напоминания, 🌐 перевод, ✉️ письма. Вопросы о поездках (виза, погода, валюта и т.п.) — тоже пожалуйста.';

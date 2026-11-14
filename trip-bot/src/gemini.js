@@ -172,7 +172,7 @@ const nowLine = (env) => {
 const ROUTE_SCHEMA = {
   type: 'OBJECT',
   properties: {
-    intent: { type: 'STRING', enum: ['trip', 'trip_note', 'trip_docs', 'trip_status', 'trip_cancel', 'trip_finish', 'event', 'reminder', 'translate', 'letter', 'agenda', 'reminders_list', 'chat'] },
+    intent: { type: 'STRING', enum: ['trip', 'trip_note', 'trip_docs', 'trip_status', 'trip_cancel', 'trip_finish', 'event', 'reminder', 'translate', 'letter', 'agenda', 'reminders_list', 'chat', 'off_topic'] },
     transcript: S(),
     question: S(),
     reply: S(),
@@ -214,7 +214,8 @@ Decide the intent:
 - letter: write/draft a letter, email, official request, message or note for him.
 - agenda: he asks what is planned (today, tomorrow, this week, a date).
 - reminders_list: he asks to see his reminders.
-- chat: greetings, thanks or anything else; put a short helpful answer in reply.
+- chat: greetings, thanks, questions about what the bot can do, and questions that help with his trips or his work as an executive: visas and entry rules, weather or time zone at a destination, currency, what to pack, airports, local customs, business etiquette, how to word something. Put a short answer in reply.
+- off_topic: anything unrelated to travel or his work: recipes, jokes, stories, homework, trivia, coding, health or legal advice, general chit-chat questions. Leave reply null (the bot answers with a fixed text).
 
 Fill only the fields for the chosen intent:
 transcript: if there is a voice note or round video, its transcript in the original language; else null.
@@ -225,7 +226,7 @@ letter: lt_request = everything he said about the letter (recipient, purpose, de
 agenda: ag_from and ag_to "YYYY-MM-DD" (today if he does not say).
 Resolve relative dates and times from now, in Tashkent time.
 question: if an event or reminder has no date or time you can work out, one short question in ${L} asking only for that; else null.
-reply: for chat, a short answer in ${L}; else null.`;
+reply: for chat only, a short answer in ${L}: at most 3 sentences, no lists; for facts that change (visa rules, prices) say to check the official source. Else null.`;
   return gemini(env, { prompt, media, schema: ROUTE_SCHEMA, thinking: 'low', timeoutMs: 25000 });
 }
 

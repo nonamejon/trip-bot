@@ -43,6 +43,15 @@ const ROUTE = [
   ['Germaniya elchixonasiga viza boʻyicha xat yoz', null, (r) => r.intent === 'letter'],
   ['напиши письмо партнёру с благодарностью за встречу', null, (r) => r.intent === 'letter'],
   ['rahmat!', null, (r) => r.intent === 'chat'],
+  ['salom', null, (r) => r.intent === 'chat'],
+  ['bot nima qila oladi?', null, (r) => r.intent === 'chat'],
+  ['Dubayga oʻzbek fuqarolariga viza kerakmi?', null, (r) => r.intent === 'chat' && !!r.reply],
+  ['Istanbulda hozir soat nechchi?', null, (r) => r.intent === 'chat'],
+  ['Turkiyaga qanday valyuta olib ketgan maʼqul?', null, (r) => r.intent === 'chat'],
+  ['pitsa retseptini ayt', null, (r) => r.intent === 'off_topic'],
+  ['anekdot aytib ber', null, (r) => r.intent === 'off_topic'],
+  ['напиши код на питоне для сортировки', null, (r) => r.intent === 'off_topic'],
+  ['bugun qanday film koʻrsam boʻladi?', null, (r) => r.intent === 'off_topic'],
 ];
 
 // [message, draft so far, history, check(fields)]

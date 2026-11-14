@@ -165,6 +165,7 @@ function fakeRoute(prompt, hasMedia) {
   if (/xat yoz/.test(m)) return { intent: 'letter', lt_request: msg };
   if (/rejalarim/.test(m)) return { intent: 'agenda', ag_from: localISO(1), ag_to: localISO(1) };
   if (/rahmat/.test(m)) return { intent: 'chat', reply: 'Arzimaydi!' };
+  if (/pitsa/.test(m)) return { intent: 'off_topic', reply: 'Klassik pitsa uchun xamir...' };
   return { intent: 'trip' };
 }
 
@@ -421,6 +422,9 @@ assert(sqlite.prepare('SELECT COUNT(*) c FROM letters').get().c === 4, 'letter f
 
 await say('rahmat'); show('small talk');
 assert(lastText() === 'Arzimaydi!', 'small talk answered');
+const callsBefore = geminiCalls.length;
+await say('pitsa retseptini ayt'); show('off-topic question');
+assert(lastText().startsWith('Bu savolga javob bera olmayman') && !lastText().includes('xamir') && geminiCalls.length === callsBefore + 1, 'an unrelated question gets the fixed answer, with no extra Gemini call');
 
 await tap('cl'); show('phone calendar link');
 const feedUrl = lastText().match(/https:\/\/bot\.example\/cal\/111\/[0-9a-f]{32}\.ics/)?.[0];

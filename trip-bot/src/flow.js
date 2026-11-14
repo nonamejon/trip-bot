@@ -319,6 +319,7 @@ export async function handleOwnerMessage(env, msg) {
       return showAgenda(env, uid, chat, L, lang, from, to);
     }
     case 'reminders_list': return listReminders(env, uid, chat, L, lang);
+    case 'off_topic': return send(env, chat, L.offTopic, mainKb(L)); // fixed text: no Gemini writing for unrelated questions
     default: return send(env, chat, esc(r.reply || L.chatFallback), mainKb(L));
   }
 }
