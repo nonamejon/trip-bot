@@ -2,7 +2,7 @@
 // Messages reach here from flow.js after the router (gemini.routeMessage) decides what they are for.
 
 import {
-  MIN, HOUR, DAY, one, all, run, logEvent, esc, fmtLocal, hmLocal, localToUtc, localISODate, tz,
+  MIN, HOUR, DAY, one, all, run, claim, sendOrRelease, logEvent, esc, fmtLocal, hmLocal, localToUtc, localISODate, tz,
   setMode, strings, dayStart, addDaysISO, dayLabel, getTrip, isUser, userIds,
 } from './util.js';
 import { send, sendLong, kb, tgUpload, whileTyping } from './telegram.js';
@@ -11,8 +11,9 @@ import { eventIcs, feedIcs } from './files.js';
 import { reportError } from './flow.js';
 
 const DEFAULT_EVENT_REMIND_MIN = 30;
-const isDate = (s) => /^\d{4}-\d{2}-\d{2}$/.test(s || '');
-const isTime = (s) => /^\d{2}:\d{2}$/.test(s || '');
+// Real calendar dates and times only (Gemini can return "2026-02-30" or "25:00").
+const isDate = (s) => /^\d{4}-\d{2}-\d{2}$/.test(s || '') && !Number.isNaN(Date.parse(s)) && new Date(Date.parse(s)).toISOString().slice(0, 10) === s;
+const isTime = (s) => /^([01]\d|2[0-3]):[0-5]\d$/.test(s || '');
 const short = (s, n) => (s.length > n ? s.slice(0, n - 1) + '…' : s);
 
 // ======================= menu =======================
@@ -33,14 +34,18 @@ function eventWhen(env, L, lang, e) {
   return `${dayLabel(iso, lang)}, ${hmLocal(env, e.start_at)}${e.end_at ? '–' + hmLocal(env, e.end_at) : ''}`;
 }
 
-// r: router fields (ev_title, ev_date, ev_time, ev_end_time, ev_location, ev_notes, ev_remind_min)
+// r: router fields (ev_title, ev_date, ev_time, ev_end_time, ev_location, ev_notes, ev_remind_min).
+// Returns false if the time has clearly passed (the caller asks again).
 export async function addEvent(env, uid, chat, L, lang, r) {
+  if (!isDate(r.ev_date)) return false;
   const timed = isTime(r.ev_time);
   const start = localToUtc(env, timed ? `${r.ev_date}T${r.ev_time}` : r.ev_date);
+  if (timed ? start < Date.now() - HOUR : r.ev_date < localISODate(env)) return false;
   let end = timed && isTime(r.ev_end_time) ? localToUtc(env, `${r.ev_date}T${r.ev_end_time}`) : null;
   if (end != null && end <= start) end = null;
   const before = timed ? (Number.isInteger(r.ev_remind_min) && r.ev_remind_min >= 0 ? r.ev_remind_min : DEFAULT_EVENT_REMIND_MIN) : null;
-  const remindAt = before != null && start - before * MIN > Date.now() ? start - before * MIN : null;
+  // A heads-up time already passed (the event is soon): remind at once, unless it has started.
+  const remindAt = before == null || start <= Date.now() ? null : Math.max(start - before * MIN, Date.now());
   const title = String(r.ev_title || '').trim() || '—';
   const res = await run(env, 'INSERT INTO cal_events (owner_id, title, start_at, end_at, all_day, location, notes, remind_at, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
     uid, title, start, end, timed ? 0 : 1, r.ev_location || null, r.ev_notes || null, remindAt, Date.now());
@@ -54,9 +59,11 @@ export async function addEvent(env, uid, chat, L, lang, r) {
     if (rows.length) conflict = '\n\n' + L.conflict(rows.map((x) => `${hmLocal(env, x.start_at)} ${esc(x.title)}`).join(', '));
   }
   const e = { start_at: start, end_at: end, all_day: timed ? 0 : 1 };
-  return send(env, chat,
-    `${L.eventAdded}\n<b>${esc(title)}</b>\n🗓 ${eventWhen(env, L, lang, e)}${r.ev_location ? `\n📍 ${esc(r.ev_location)}` : ''}${remindAt ? '\n' + L.remindBefore(before) : ''}${conflict}`,
+  const soon = remindAt != null && remindAt <= Date.now() + MIN;
+  await send(env, chat,
+    `${L.eventAdded}\n<b>${esc(title)}</b>\n🗓 ${eventWhen(env, L, lang, e)}${r.ev_location ? `\n📍 ${esc(r.ev_location)}` : ''}${remindAt && !soon ? '\n' + L.remindBefore(before) : ''}${conflict}`,
     kb([[[L.btnDelete, `xd:${id}`], [L.btnIcs, `xi:${id}`]]]));
+  return true;
 }
 
 // Everything planned between two local dates (inclusive): events, reminders, flights, trips. Returns { text, events } or null.
@@ -71,8 +78,13 @@ export async function agenda(env, uid, L, lang, fromISO, toISO) {
     if (e.all_day) put(iso, e.start_at - 1, `• ${L.allDay}: ${esc(e.title)}`);
     else put(iso, e.start_at, `• ${hmLocal(env, e.start_at)}${e.end_at ? '–' + hmLocal(env, e.end_at) : ''} ${esc(e.title)}${e.location ? ` · 📍 ${esc(e.location)}` : ''}`);
   }
-  const rems = await all(env, 'SELECT * FROM user_reminders WHERE owner_id = ? AND done = 0 AND due_at >= ? AND due_at < ? ORDER BY due_at', uid, from, to);
-  for (const r of rems) put(localISODate(env, r.due_at), r.due_at, `• ⏰ ${hmLocal(env, r.due_at)} ${esc(r.text)}${r.repeat !== 'none' ? ' 🔁' : ''}`);
+  // Reminders in the range; a repeating one appears on every day it fires (a daily pill: each day of the week).
+  const rems = await all(env, 'SELECT * FROM user_reminders WHERE owner_id = ? AND done = 0 AND due_at < ? ORDER BY due_at', uid, to);
+  for (const r of rems) {
+    for (let due = r.due_at, n = 0; due != null && due < to && n < 62; due = r.repeat === 'none' ? null : nextDue(env, due, r.repeat, r.anchor_day), n++) {
+      if (due >= from) put(localISODate(env, due), due, `• ⏰ ${hmLocal(env, due)} ${esc(r.text)}${r.repeat !== 'none' ? ' 🔁' : ''}`);
+    }
+  }
 
   // Booked trips only (not ones he is still choosing), and only on the days that matter: the flight out and the
   // day back. No line for every day of the stay: that read like a new flight reminder each morning.
@@ -103,7 +115,8 @@ export async function showAgenda(env, uid, chat, L, lang, fromISO, toISO) {
 // ======================= reminders =======================
 
 const localDay = (env, ms) => new Date(ms + tz(env)).getUTCDay();
-export function nextDue(env, ms, repeat) {
+// anchor: the day of the month a monthly reminder belongs to (31 stays 31: Jan 31 -> Feb 28 -> Mar 31).
+export function nextDue(env, ms, repeat, anchor = null) {
   if (repeat === 'daily') return ms + DAY;
   if (repeat === 'weekly') return ms + 7 * DAY;
   if (repeat === 'weekdays') { let n = ms + DAY; while ([0, 6].includes(localDay(env, n))) n += DAY; return n; }
@@ -111,7 +124,7 @@ export function nextDue(env, ms, repeat) {
     const d = new Date(ms + tz(env));
     const y = d.getUTCFullYear(), m = d.getUTCMonth() + 1;
     const dim = new Date(Date.UTC(y, m + 1, 0)).getUTCDate();
-    return Date.UTC(y, m, Math.min(d.getUTCDate(), dim), d.getUTCHours(), d.getUTCMinutes()) - tz(env);
+    return Date.UTC(y, m, Math.min(anchor || d.getUTCDate(), dim), d.getUTCHours(), d.getUTCMinutes()) - tz(env);
   }
   return null;
 }
@@ -120,14 +133,16 @@ export function nextDue(env, ms, repeat) {
 export async function addReminder(env, uid, chat, L, lang, r) {
   const repeat = ['daily', 'weekdays', 'weekly', 'monthly'].includes(r.rm_repeat) ? r.rm_repeat : 'none';
   let due = localToUtc(env, `${r.rm_date}T${isTime(r.rm_time) ? r.rm_time : '09:00'}`);
+  if (!isDate(r.rm_date)) return false;
+  const anchor = repeat === 'monthly' ? Number(r.rm_date.slice(8, 10)) : null;
   if (repeat === 'none') {
     if (due < Date.now() - MIN) return false;
   } else {
-    while (due <= Date.now()) due = nextDue(env, due, repeat);
     if (repeat === 'weekdays') while ([0, 6].includes(localDay(env, due))) due += DAY;
+    while (due <= Date.now()) due = nextDue(env, due, repeat, anchor);
   }
   const text = String(r.rm_text || '').trim() || '—';
-  const res = await run(env, 'INSERT INTO user_reminders (owner_id, text, due_at, repeat, created_at) VALUES (?, ?, ?, ?, ?)', uid, text, due, repeat, Date.now());
+  const res = await run(env, 'INSERT INTO user_reminders (owner_id, text, due_at, repeat, anchor_day, created_at) VALUES (?, ?, ?, ?, ?, ?)', uid, text, due, repeat, anchor, Date.now());
   const id = res.meta.last_row_id;
   await logEvent(env, 'owner', 'reminder_add', null, `#${id} ${repeat}`);
   await send(env, chat, `${L.reminderSet}\n<b>${esc(text)}</b>\n🕘 ${fmtLocal(env, due, lang)}${repeat !== 'none' ? ` · 🔁 ${L.repeatWord[repeat]}` : ''}`,
@@ -149,8 +164,9 @@ export async function doTranslate(env, chat, L, lang, text, media, target) {
   let r;
   try { r = await whileTyping(env, chat, () => translate(env, text, media, target, lang)); }
   catch (e) { await reportError(env, e, 'translate'); return send(env, chat, L.readFail); }
-  const src = String(r.source_lang || '?').toUpperCase(), tgt = String(r.target_lang || target || '?').toUpperCase();
-  await logEvent(env, 'owner', 'translate', null, `${src}->${tgt}`);
+  if (!String(r?.translation || '').trim()) return send(env, chat, L.readFail);
+  const src = String(r.source_lang || '').toUpperCase(), tgt = String(r.target_lang || target || '').toUpperCase();
+  await logEvent(env, 'owner', 'translate', null, `${src || '?'}->${tgt || '?'}`);
   return sendLong(env, chat, `${L.translationTitle(src, tgt)}\n\n${esc(r.translation)}`);
 }
 
@@ -251,7 +267,7 @@ export async function handleSecCallback(env, { a, id, arg, uid, chat, L, lang, a
     case 'rx': {
       const r = await one(env, 'SELECT * FROM user_reminders WHERE id = ? AND owner_id = ?', +id, uid);
       if (!r || r.done) { await answer(L.staleBtn); return true; }
-      await run(env, 'UPDATE user_reminders SET done = 1 WHERE id = ?', r.id);
+      if (!(await claim(env, 'UPDATE user_reminders SET done = 1 WHERE id = ? AND done = 0', r.id))) { await answer(L.staleBtn); return true; }
       await answer(L.deleted);
       await send(env, chat, `🗑 ${L.deleted} <s>${esc(r.text)}</s>`);
       return true;
@@ -264,8 +280,8 @@ export async function handleSecCallback(env, { a, id, arg, uid, chat, L, lang, a
     }
     case 'rs': {
       const r = await one(env, 'SELECT * FROM user_reminders WHERE id = ? AND owner_id = ?', +id, uid);
-      await dropKeyboard();
-      if (!r) { await answer(L.staleBtn); return true; }
+      // A second tap on the same message (the buttons are already gone) must not add a second reminder.
+      if (!r || !(await dropKeyboard())) { await answer(L.staleBtn); return true; }
       const due = Date.now() + (+arg || 15) * MIN;
       await run(env, 'INSERT INTO user_reminders (owner_id, text, due_at, repeat, created_at) VALUES (?, ?, ?, ?, ?)', uid, r.text, due, 'none', Date.now());
       await answer(); await send(env, chat, L.snoozed(hmLocal(env, due)));
@@ -280,32 +296,43 @@ export async function handleSecCallback(env, { a, id, arg, uid, chat, L, lang, a
 
 // ======================= scheduled (cron, every minute) =======================
 
+// Each send is claimed first with a conditional UPDATE, so overlapping cron runs never send it twice; if Telegram
+// fails for a passing reason, the claim is released and the next minute tries again.
 export async function secretaryChecks(env) {
+  await morningBrief(env).catch((e) => reportError(env, e, 'morning brief')); // before the day's reminders start
   const now = Date.now();
 
   for (const e of await all(env, 'SELECT * FROM cal_events WHERE reminded = 0 AND remind_at IS NOT NULL AND remind_at <= ?', now)) {
-    await run(env, 'UPDATE cal_events SET reminded = 1 WHERE id = ?', e.id);
+    if (!(await claim(env, 'UPDATE cal_events SET reminded = 1 WHERE id = ? AND reminded = 0', e.id))) continue;
     if (e.start_at < now - 5 * MIN) continue; // too late to be useful
     const { L } = await strings(env, e.owner_id);
-    const mins = Math.max(1, Math.round((e.start_at - now) / MIN));
-    await send(env, e.owner_id, `${L.eventHeadsUp(mins, esc(e.title))}\n🕒 ${hmLocal(env, e.start_at)}${e.location ? ` · 📍 ${esc(e.location)}` : ''}`);
+    const mins = Math.max(0, Math.round((e.start_at - now) / MIN));
+    try {
+      await sendOrRelease(env, () => send(env, e.owner_id, `${L.eventHeadsUp(mins, esc(e.title))}\n🕒 ${hmLocal(env, e.start_at)}${e.location ? ` · 📍 ${esc(e.location)}` : ''}`),
+        () => run(env, 'UPDATE cal_events SET reminded = 0 WHERE id = ?', e.id));
+    } catch (err) { await reportError(env, err, 'event heads-up'); continue; }
     await logEvent(env, 'cron', 'event_heads_up', null, `#${e.id}`);
   }
 
   for (const r of await all(env, 'SELECT * FROM user_reminders WHERE done = 0 AND due_at <= ? ORDER BY due_at LIMIT 20', now)) {
-    if (r.repeat === 'none') await run(env, 'UPDATE user_reminders SET done = 1 WHERE id = ?', r.id);
-    else {
-      let next = nextDue(env, r.due_at, r.repeat);
-      while (next <= now) next = nextDue(env, next, r.repeat);
-      await run(env, 'UPDATE user_reminders SET due_at = ? WHERE id = ?', next, r.id);
+    let release;
+    if (r.repeat === 'none') {
+      if (!(await claim(env, 'UPDATE user_reminders SET done = 1 WHERE id = ? AND done = 0', r.id))) continue;
+      release = () => run(env, 'UPDATE user_reminders SET done = 0 WHERE id = ?', r.id);
+    } else {
+      let next = nextDue(env, r.due_at, r.repeat, r.anchor_day);
+      while (next <= now) next = nextDue(env, next, r.repeat, r.anchor_day);
+      if (!(await claim(env, 'UPDATE user_reminders SET due_at = ? WHERE id = ? AND due_at = ? AND done = 0', next, r.id, r.due_at))) continue;
+      release = () => run(env, 'UPDATE user_reminders SET due_at = ? WHERE id = ? AND due_at = ?', r.due_at, r.id, next);
     }
+    if (r.due_at < now - 12 * HOUR) continue; // missed by far (the bot was down): skip this one, keep the series
     const { L } = await strings(env, r.owner_id);
     const last = r.repeat === 'none' ? [L.btnDone, `rd:${r.id}`] : [L.btnStop, `rp:${r.id}`];
-    await send(env, r.owner_id, `${L.reminderFire}\n${esc(r.text)}`, kb([[[L.btnSnooze15, `rs:${r.id}:15`], [L.btnSnooze60, `rs:${r.id}:60`]], [last]]));
+    try {
+      await sendOrRelease(env, () => send(env, r.owner_id, `${L.reminderFire}\n${esc(r.text)}`, kb([[[L.btnSnooze15, `rs:${r.id}:15`], [L.btnSnooze60, `rs:${r.id}:60`]], [last]])), release);
+    } catch (err) { await reportError(env, err, 'reminder'); continue; }
     await logEvent(env, 'cron', 'user_reminder', null, `#${r.id}`);
   }
-
-  await morningBrief(env);
 }
 
 // Once a day between BRIEF_HOUR and noon (Tashkent time): today's plan, if there is anything.
@@ -315,10 +342,8 @@ async function morningBrief(env) {
 async function morningBriefFor(env, uid) {
   const hour = new Date(Date.now() + tz(env)).getUTCHours();
   if (hour < (Number(env.BRIEF_HOUR) || 8) || hour >= 12) return;
-  const p = await one(env, 'SELECT lang, brief_date FROM prefs WHERE telegram_id = ?', uid);
   const today = localISODate(env);
-  if (!p || p.brief_date === today) return;
-  await run(env, 'UPDATE prefs SET brief_date = ? WHERE telegram_id = ?', today, uid);
+  if (!(await claim(env, `UPDATE prefs SET brief_date = ? WHERE telegram_id = ? AND COALESCE(brief_date, '') <> ?`, today, uid, today))) return;
   const { lang, L } = await strings(env, uid);
   const a = await agenda(env, uid, L, lang, today, today);
   if (a) { await sendLong(env, uid, `${L.briefTitle}\n\n${a.text}`); await logEvent(env, 'cron', 'morning_brief'); }

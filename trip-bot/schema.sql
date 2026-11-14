@@ -91,6 +91,7 @@ CREATE TABLE IF NOT EXISTS user_reminders (
   text       TEXT NOT NULL,
   due_at     INTEGER NOT NULL,
   repeat     TEXT NOT NULL DEFAULT 'none',        -- none | daily | weekdays | weekly | monthly
+  anchor_day INTEGER,                             -- monthly: the day of the month it belongs to
   done       INTEGER NOT NULL DEFAULT 0,
   created_at INTEGER NOT NULL
 );

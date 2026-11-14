@@ -40,6 +40,10 @@ export const COMMANDS = {
 
 export const STRANGER = (id) => `Bu shaxsiy yordamchi. Bot egasiga soʻrovingiz yuborildi — ruxsat berilsa, shu yerda xabar olasiz. (Telegram ID: <code>${id}</code>)\n\nЭто личный помощник. Владельцу бота отправлен ваш запрос — если доступ дадут, вы получите сообщение здесь. (Telegram ID: <code>${id}</code>)`;
 
+// Durations in words: 90 -> "1 soat 30 daqiqa" / "1 ч 30 мин", 1440 -> "1 kun" / "1 дн." (never "1440 daqiqa").
+const durUz = (m) => (m >= 1440 && m % 1440 === 0 ? `${m / 1440} kun` : m >= 60 ? `${Math.floor(m / 60)} soat${m % 60 ? ` ${m % 60} daqiqa` : ''}` : `${m} daqiqa`);
+const durRu = (m) => (m >= 1440 && m % 1440 === 0 ? `${m / 1440} дн.` : m >= 60 ? `${Math.floor(m / 60)} ч${m % 60 ? ` ${m % 60} мин` : ''}` : `${m} мин`);
+
 export const O = {
   uz: {
     langSet: 'Til: Oʻzbekcha 🇺🇿',
@@ -100,7 +104,7 @@ export const O = {
     agentLate: (code) => `Agent ${code} boʻyicha hali javob bermadi. Unga eslatma yubordim.`,
     nudgeOffers: (dest, code) => `${dest} (${code}) boʻyicha variantlar tanlovingizni kutmoqda. Narxlar oʻzgarishi mumkin, shuning uchun tezroq tanlagan maʼqul.`,
     checkin: (route, flight) => `Ertaga parvoz: ${route}.\nReys: ${flight}\nOnlayn roʻyxatdan oʻtish hozir ochiq boʻlishi kerak.`,
-    btnTicket: 'Chiptani ochish',
+    btnTicket: 'Chiptani ochish', ticketWord: 'Chipta',
     leave: (route, time) => `Reysingiz (${route}) soat ${time} da, 3 soatdan keyin. Aeroportga yoʻl olish vaqti boʻldi.`,
     welcomeBack: (dest, code) => `Safardan eson-omon qaytganingiz bilan! ${dest} safari (${code}) yopildi; uni /trips da topishingiz mumkin.`,
     mirrorGroup: 'Agent guruhi', mirrorBot: 'Bot → agent', mirrorAgent: 'Agent',
@@ -174,7 +178,7 @@ export const O = {
     agentLate: (code) => `Агент ещё не ответил по ${code}. Я отправил ему напоминание.`,
     nudgeOffers: (dest, code) => `Варианты по ${dest} (${code}) ждут вашего выбора. Цены могут измениться, лучше выбрать поскорее.`,
     checkin: (route, flight) => `Завтра вылет: ${route}.\nРейс: ${flight}\nОнлайн-регистрация уже должна быть открыта.`,
-    btnTicket: 'Открыть билет',
+    btnTicket: 'Открыть билет', ticketWord: 'Билет',
     leave: (route, time) => `Ваш рейс (${route}) в ${time}, через 3 часа. Пора выезжать в аэропорт.`,
     welcomeBack: (dest, code) => `С возвращением! Поездка ${dest} (${code}) закрыта, её можно найти в /trips.`,
     mirrorGroup: 'Группа агента', mirrorBot: 'Бот → агент', mirrorAgent: 'Агент',
@@ -268,14 +272,15 @@ Object.assign(O.uz, {
   agendaEmpty: 'Bu kunlarga rejalar yoʻq.',
   allDay: 'kun boʻyi', flightWord: 'Reys', tripWord: 'Safar',
   eventAdded: '✅ <b>Taqvimga qoʻshildi</b>',
-  remindBefore: (m) => `⏰ ${m} daqiqa oldin eslataman.`,
+  remindBefore: (m) => (m > 0 ? `⏰ ${durUz(m)} oldin eslataman.` : '⏰ Boshlanish vaqtida eslataman.'),
   conflict: (list) => `⚠️ Shu vaqtda boshqa reja bor: ${list}`,
   btnDelete: '🗑 Oʻchirish', btnIcs: '📎 .ics fayl',
   deleted: 'Oʻchirildi.',
-  eventHeadsUp: (m, title) => `📅 <b>${m} daqiqadan keyin:</b> ${title}`,
+  eventHeadsUp: (m, title) => (m > 1 ? `📅 <b>${durUz(m)}dan keyin:</b> ${title}` : `📅 <b>Hozir:</b> ${title}`),
   reminderSet: '⏰ <b>Eslatma qoʻyildi</b>',
   repeatWord: { daily: 'har kuni', weekdays: 'ish kunlari', weekly: 'har hafta', monthly: 'har oy' },
   reminderPast: 'Bu vaqt oʻtib ketgan. Qaysi vaqtga qoʻyay?',
+  eventPast: 'Kechirasiz, bu vaqt oʻtib ketgan koʻrinadi. Qaysi kun va soatga yozib qoʻyay?',
   reminderFire: '⏰ <b>Eslatma</b>',
   btnDone: '✅ Bajarildi', btnStop: '⏹ Takrorlashni toʻxtatish', btnSnooze15: '⏰ +15 daqiqa', btnSnooze60: '⏰ +1 soat',
   snoozed: (time) => `Yaxshi, ${time} da yana eslataman.`,
@@ -284,7 +289,7 @@ Object.assign(O.uz, {
   remindersEmpty: 'Faol eslatmalar yoʻq. Masalan, yozing: «Ertaga 9 da Boburga qoʻngʻiroq qilishni eslat».',
   translateChoose: 'Qaysi tilga tarjima qilay?', btnAuto: '🔄 Avtomatik',
   translateMode: (target) => `🌐 <b>Tarjima rejimi</b>${target ? ` (→ ${target.toUpperCase()})` : ''}\nMatn, ovozli xabar, rasm yoki PDF yuboring — tarjima qilaman.\nChiqish: pastdagi menyu tugmasi yoki /menu.`,
-  translationTitle: (src, tgt) => `🌐 <b>${src} → ${tgt}</b>`,
+  translationTitle: (src, tgt) => `🌐 <b>${src && tgt ? `${src} → ${tgt}` : src || tgt}</b>`,
   nothingToTranslate: 'Tarjima qilinadigan matn yoki faylni yuboring.',
   letterAsk: 'Kimga va nima haqida xat yozay? Masalan: «Germaniya elchixonasiga viza koʻrib chiqishni tezlashtirish haqida rasmiy xat».',
   btnRevise: '✏️ Oʻzgartirish', btnLetterTranslate: '🌐 Boshqa tilga',
@@ -321,14 +326,15 @@ Object.assign(O.ru, {
   agendaEmpty: 'На эти дни планов нет.',
   allDay: 'весь день', flightWord: 'Рейс', tripWord: 'Поездка',
   eventAdded: '✅ <b>Добавил в календарь</b>',
-  remindBefore: (m) => `⏰ Напомню за ${m} мин.`,
+  remindBefore: (m) => (m > 0 ? `⏰ Напомню за ${durRu(m)}` : '⏰ Напомню в момент начала.'),
   conflict: (list) => `⚠️ На это время уже есть: ${list}`,
   btnDelete: '🗑 Удалить', btnIcs: '📎 Файл .ics',
   deleted: 'Удалено.',
-  eventHeadsUp: (m, title) => `📅 <b>Через ${m} мин:</b> ${title}`,
+  eventHeadsUp: (m, title) => (m > 1 ? `📅 <b>Через ${durRu(m)}:</b> ${title}` : `📅 <b>Сейчас:</b> ${title}`),
   reminderSet: '⏰ <b>Напоминание установлено</b>',
   repeatWord: { daily: 'каждый день', weekdays: 'по будням', weekly: 'каждую неделю', monthly: 'каждый месяц' },
   reminderPast: 'Это время уже прошло. На когда поставить?',
+  eventPast: 'Извините, это время, кажется, уже прошло. На какой день и время записать?',
   reminderFire: '⏰ <b>Напоминание</b>',
   btnDone: '✅ Сделано', btnStop: '⏹ Больше не повторять', btnSnooze15: '⏰ +15 мин', btnSnooze60: '⏰ +1 час',
   snoozed: (time) => `Хорошо, напомню ещё раз в ${time}.`,
@@ -337,7 +343,7 @@ Object.assign(O.ru, {
   remindersEmpty: 'Активных напоминаний нет. Например, напишите: «Напомни завтра в 9 позвонить Бобуру».',
   translateChoose: 'На какой язык перевести?', btnAuto: '🔄 Автоматически',
   translateMode: (target) => `🌐 <b>Режим перевода</b>${target ? ` (→ ${target.toUpperCase()})` : ''}\nОтправьте текст, голосовое, фото или PDF — переведу.\nВыход: кнопка меню внизу или /menu.`,
-  translationTitle: (src, tgt) => `🌐 <b>${src} → ${tgt}</b>`,
+  translationTitle: (src, tgt) => `🌐 <b>${src && tgt ? `${src} → ${tgt}` : src || tgt}</b>`,
   nothingToTranslate: 'Отправьте текст или файл для перевода.',
   letterAsk: 'Кому и о чём написать? Например: «официальное письмо в посольство Германии с просьбой ускорить рассмотрение визы».',
   btnRevise: '✏️ Изменить', btnLetterTranslate: '🌐 На другой язык',

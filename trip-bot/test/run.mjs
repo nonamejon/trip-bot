@@ -37,6 +37,7 @@ let lastGeminiMime = null, lastParsePrompt = '', lastSearchPrompt = '', failSear
 let ticketDepart = '2026-11-12T09:15', ticketBack = '2026-11-15T21:05';
 let msgId = 100, offersRound = 0, failNextGemini = false;
 const sent = [];
+const cleared = new Set();
 const geminiCalls = [];
 globalThis.fetch = async (url, init = {}) => {
   url = String(url);
@@ -75,7 +76,7 @@ globalThis.fetch = async (url, init = {}) => {
       out = { subject: 'Viza arizasi', body: 'Hurmatli janoblar, arizamni tezlashtirishingizni soʻrayman. Hurmat bilan, Azizbek', lang: prompt.includes('into English') ? 'en' : 'uz' };
     } else if (prompt.includes('Read the date and time in this message')) {
       geminiCalls.push('parseWhen');
-      out = { date: localISO(3), time: '07:40' };
+      out = /kerak emas/.test(prompt) ? { date: null, time: null } : { date: localISO(3), time: '07:40' };
     } else if (prompt.includes('parsing step') && prompt.includes('executive')) {
       geminiCalls.push('parseRequest' + (hasMedia ? '+audio' : ''));
       lastParsePrompt = prompt;
@@ -132,6 +133,11 @@ globalThis.fetch = async (url, init = {}) => {
     const problem = checkTelegram(method, p);
     if (problem) { tgErrors.push(`${method}: ${problem}`); return new Response(JSON.stringify({ ok: false, description: 'Bad Request: ' + problem })); }
     let result = true;
+    if (method === 'editMessageReplyMarkup') { // like Telegram: removing buttons that are already gone fails
+      const key = `${p.chat_id}:${p.message_id}`;
+      if (cleared.has(key)) return new Response(JSON.stringify({ ok: false, description: 'Bad Request: message is not modified' }));
+      if (!p.reply_markup?.inline_keyboard?.length) cleared.add(key);
+    }
     if (method === 'sendMessage') result = { message_id: ++msgId, chat: { id: p.chat_id }, text: p.text };
     if (method === 'sendDocument') result = { message_id: ++msgId, document: { file_id: 'FILE_' + msgId } };
     if (method === 'getFile') result = { file_path: 'voice/file_1.oga' };
@@ -382,8 +388,9 @@ await say('/today'); show('/today');
 await say('/reminders'); show('/reminders');
 assert(lastText().includes('Dori ichish') && lastText().includes('Позвонить Бобуру'), 'reminders list');
 
-advance(21); await cron(); show('cron: 20-minute reminder');
-assert(lastText().includes('Позвонить Бобуру') && lastKb().includes(`rs:${rm20.id}:15`) && sqlite.prepare('SELECT done FROM user_reminders WHERE id = ?').get(rm20.id).done === 1, 'one-off reminder fires once, with snooze buttons');
+advance(21); { const mark = sent.length; await cron(); show('cron: 20-minute reminder');
+var fired = sent.slice(mark).filter((x) => (x.p.text || '').includes('Позвонить Бобуру')); }
+assert(fired.length === 1 && JSON.stringify(fired[0].p.reply_markup).includes(`rs:${rm20.id}:15`) && sqlite.prepare('SELECT done FROM user_reminders WHERE id = ?').get(rm20.id).done === 1, 'one-off reminder fires once, with snooze buttons');
 await tap(`rs:${rm20.id}:15`); show('snooze 15 min');
 advance(16); await cron(); show('cron: snoozed reminder');
 assert(sent.filter((x) => x.p.text?.includes('Позвонить Бобуру')).length >= 3, 'snoozed reminder fires again');
@@ -617,6 +624,90 @@ assert(lastFaresQuery.get('departure_at') === '2026-11' && flexFares.length === 
 assert((await fetchFares({}, { destination_iata: 'IST', date_from: '2026-11-12' })).length === 0, 'no token: no fare lookup');
 const nearFares = await fetchFares({ TRAVELPAYOUTS_TOKEN: 't' }, { origin_iata: 'TAS', destination_iata: 'IST', date_from: '2026-11-13', date_to: '2026-11-16' });
 assert(nearFares.length === 1 && nearFares[0].depart === '2026-11-12T07:40', 'exact dates: fares for those dates or the closest ones (±3 days)');
+
+// ---------- audit fixes: races, stale buttons, outdated results ----------
+{
+  env.AGENT_MODE = 'search';
+  sqlite.prepare(`UPDATE trips SET status = 'done' WHERE status IN ('collecting', 'draft', 'sent', 'offers', 'chosen', 'booked')`).run();
+  // a double tap on "approve" queues one search
+  await say('Istanbul again please, same as before, 23 kg'); const dt = status().id;
+  await Promise.all([tap(`ap:${dt}`), tap(`ap:${dt}`)]);
+  assert(sqlite.prepare(`SELECT COUNT(*) c FROM jobs WHERE kind = 'search_offers' AND trip_id = ? AND done_at IS NULL`).get(dt).c === 1 && !sent.slice(-4).some((x) => /Kechirasiz, xabaringizni/.test(x.p.text || '')), 'a double tap on approve: one search, no error');
+  // cancelled while searching: the late result is dropped
+  const { runSearch } = await import('../src/search.js');
+  const job = sqlite.prepare(`SELECT * FROM jobs WHERE trip_id = ? AND done_at IS NULL`).get(dt);
+  sqlite.prepare('UPDATE jobs SET done_at = 1 WHERE id = ?').run(job.id);
+  const late = runSearch(env, job);
+  sqlite.prepare(`UPDATE trips SET status = 'cancelled' WHERE id = ?`).run(dt);
+  await late; await settle();
+  assert(sqlite.prepare('SELECT status FROM trips WHERE id = ?').get(dt).status === 'cancelled', 'a search that finishes after he cancelled does not bring the trip back');
+  // an old option button after a new search
+  await say('Istanbul again please, same as before, 23 kg'); const ob = status().id;
+  await tap(`ap:${ob}`); await cron();
+  const oldBtn = JSON.parse(lastKb()).inline_keyboard[0][0].callback_data;
+  assert(/^ch:\d+:0:[0-9a-z]+$/.test(oldBtn), 'option buttons carry the version of the list');
+  advance(1); await say('arzonroq variant topib ber'); await cron();
+  await tap(oldBtn);
+  assert(status().status === 'offers', 'a button from the previous list does not pick from the new one');
+  // a flight time typed for a trip that is not booked yet books it, with reminders
+  const fresh = JSON.parse(lastKb()).inline_keyboard[0][0].callback_data;
+  await tap(fresh);
+  assert(status().status === 'chosen', 'the current list still works');
+  await tap(`tf:${ob}`); await say('12-noyabr 07:40'); show('flight time on a chosen trip');
+  const obRow = sqlite.prepare('SELECT * FROM trips WHERE id = ?').get(ob);
+  assert(obRow.status === 'booked' && obRow.done_at > obRow.flight_at && sqlite.prepare('SELECT COUNT(*) c FROM reminders WHERE trip_id = ? AND sent_at IS NULL').get(ob).c === 2, 'a typed flight time books the trip: reminders and an end date');
+  // a bad answer in flight-time mode does not trap the next message
+  await tap(`tf:${ob}`); await say('kerak emas');
+  assert(lastKb().includes(`tf:${ob}`) && mode() === null, 'flight time not understood: a button to try again, no trap');
+  // the document button checks the owner
+  const docId = sqlite.prepare('INSERT INTO documents (trip_id, name, file_id, created_at) VALUES (?, ?, ?, ?)').run(ob, 'x.pdf', 'SECRETFILE', Date.now()).lastInsertRowid;
+  n0 = sent.length;
+  await update({ callback_query: { id: 'cqx', from: { id: 222, is_bot: false }, data: `doc:${docId}`, message: { message_id: msgId, chat: { id: 222 } } } });
+  assert(!sent.slice(n0).some((x) => x.method === 'sendDocument'), "one user cannot open another user's document");
+  // a ticket for another destination becomes its own trip, the booked one is untouched
+  ticketDepart = '2027-01-10T08:00'; ticketBack = '2027-01-14T19:00';
+  await update({ message: { message_id: ++msgId, from: owner, chat: { id: 111, type: 'private' }, caption: 'chiptam', document: { file_id: 'TICKET9', file_name: 't9.pdf', mime_type: 'application/pdf', file_size: 30000 } } });
+  assert(sqlite.prepare('SELECT flight_at FROM trips WHERE id = ?').get(ob).flight_at === obRow.flight_at && status().id !== ob && status().status === 'booked', "a ticket that matches none of his trips does not change the booked one");
+  env.AGENT_MODE = 'mock';
+}
+// cron runs that overlap send a reminder once
+{
+  const { secretaryChecks, nextDue: nd, addEvent } = await import('../src/secretary.js');
+  sqlite.prepare('INSERT INTO user_reminders (owner_id, text, due_at, repeat, created_at) VALUES (?, ?, ?, ?, ?)').run(111, 'Bir marta', Date.now() - 1000, 'none', Date.now());
+  sqlite.prepare('INSERT INTO user_reminders (owner_id, text, due_at, repeat, anchor_day, created_at) VALUES (?, ?, ?, ?, ?, ?)').run(111, 'Har oy', Date.now() - 1000, 'monthly', 31, Date.now());
+  n0 = sent.length;
+  await Promise.all([secretaryChecks(env), secretaryChecks(env)]);
+  assert(sent.slice(n0).filter((x) => /Bir marta/.test(x.p.text || '')).length === 1 && sent.slice(n0).filter((x) => /Har oy/.test(x.p.text || '')).length === 1, 'overlapping cron runs: each reminder is sent once');
+  const tzE2 = { TZ_OFFSET_MIN: '300' };
+  const feb = nd(tzE2, Date.parse('2027-01-31T04:00:00Z'), 'monthly', 31);
+  assert(feb === Date.parse('2027-02-28T04:00:00Z') && nd(tzE2, feb, 'monthly', 31) === Date.parse('2027-03-31T04:00:00Z'), 'monthly on the 31st: Feb 28, then back to Mar 31');
+  // a snooze tapped twice adds one reminder
+  const rid = sqlite.prepare(`SELECT id FROM user_reminders WHERE text = 'Bir marta'`).get().id;
+  const before = sqlite.prepare('SELECT COUNT(*) c FROM user_reminders').get().c;
+  const snoozeMsg = ++msgId;
+  const tapMsg = () => update({ callback_query: { id: 'cq' + updateId, from: owner, data: `rs:${rid}:15`, message: { message_id: snoozeMsg, chat: { id: 111 } } } });
+  await tapMsg(); await tapMsg();
+  assert(sqlite.prepare('SELECT COUNT(*) c FROM user_reminders').get().c === before + 1, 'a snooze tapped twice snoozes once');
+  // an event in the past is questioned; a soon one gets its heads-up at once
+  const L0 = O.uz;
+  const y = new Date(Date.now() + 5 * 3600e3 - 86400e3).toISOString().slice(0, 10);
+  assert((await addEvent(env, 111, 111, L0, 'uz', { ev_title: 'Eski', ev_date: y, ev_time: '10:00' })) === false, 'an event in the past is not saved');
+  const soon = new Date(Date.now() + 5 * 3600e3 + 10 * 60e3);
+  await addEvent(env, 111, 111, L0, 'uz', { ev_title: 'Tezda', ev_date: soon.toISOString().slice(0, 10), ev_time: soon.toISOString().slice(11, 16) });
+  n0 = sent.length; await secretaryChecks(env);
+  assert(sent.slice(n0).some((x) => /Tezda/.test(x.p.text || '') && /daqiqadan keyin/.test(x.p.text)), 'an event added 10 minutes ahead still gets a heads-up');
+}
+// long text is split safely; .ics lines are folded
+{
+  const { splitText } = await import('../src/telegram.js');
+  const parts = splitText('a &amp; b '.repeat(1000), 3900);
+  assert(parts.every((p) => p.length <= 3900 && !/&[a-z]*$/.test(p)), 'long messages are never cut inside an HTML entity');
+  const { eventIcs } = await import('../src/files.js');
+  const ics = new TextDecoder().decode(eventIcs({ id: 9, title: 'Juda uzun nomli uchrashuv '.repeat(6), start_at: Date.now(), all_day: 0 }, 18e6));
+  assert(ics.split('\r\n').every((l) => new TextEncoder().encode(l).length <= 75), '.ics lines are folded to 75 octets');
+  const fares2 = await fetchFares({ TRAVELPAYOUTS_TOKEN: 't' }, { origin_iata: 'TAS', destination_iata: 'IST', date_from: '2026-11-12', date_to: '2026-11-15', travelers: 2 });
+  assert(fares2[0].price === 412 && fares2[0].price_total === 824, 'Aviasales prices are per person: the total is for all travelers');
+}
 
 // error alerts: passing glitches are only logged; repeated ones give one warning; real errors alert at once
 const { reportError } = await import('../src/flow.js');

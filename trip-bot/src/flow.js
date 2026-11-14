@@ -8,11 +8,11 @@
 // Admin output and error alerts are English.
 
 import {
-  MIN, DAY, one, all, run, logEvent, getTrip, activeTrip, createTrip, saveTrip, setStatus, WITH_AGENT, OPEN, code,
+  MIN, HOUR, DAY, one, all, run, claim, StaleTrip, sendOrRelease, logEvent, getTrip, activeTrip, createTrip, saveTrip, setStatus, WITH_AGENT, OPEN, code,
   fmtLocal, hmLocal, dshort, localToUtc, localISODate, addDaysISO, nights, esc, money, refundWord, b64, encrypt, decrypt,
   getLang, setLang, strings, getMode, setMode, clearMode, logChat, recentChat, adminIds, isUser, loadMembers,
 } from './util.js';
-import { tg, tgUpload, send, typing, whileTyping, kb, replyKb, download } from './telegram.js';
+import { tg, tgUpload, send, sendLong, typing, whileTyping, kb, replyKb, download } from './telegram.js';
 import { parseRequest, parseOffers, transcribe, routeMessage, parseWhen, parseTicket } from './gemini.js';
 import { toAgent, openAgentThread, mirror, isMock, isSearch } from './agent.js';
 import { queueSearch, bookingComUrl, safeUrl } from './search.js';
@@ -50,11 +50,14 @@ const alertIds = (env) => (env.ALERT_ID ? String(env.ALERT_ID).split(',').map((s
 
 // Passing glitches: a D1 network blip, Gemini busy or slow. The cron retries next minute and the owner already got
 // a polite "try again", so these are only logged; an alert goes out if they keep happening (3+ in 15 min, once an hour).
-const TRANSIENT = /network connection lost|connection (reset|closed)|D1_ERROR.*(overloaded|internal|timeout|reset)|timed out|HTTP (429|5\d\d)|fetch failed|too many requests/i;
+const TRANSIENT = /network connection lost|connection (reset|closed)|D1_ERROR.*(overloaded|internal|timeout|reset)|timed out|HTTP (429|5\d\d)|fetch failed|too many requests|location is not supported/i;
+// "User location is not supported": a cron run landed on a Cloudflare machine in a region Gemini refuses; the next
+// minute runs elsewhere, so it is retried like any passing glitch.
 
 export async function reportError(env, e, where) {
-  console.error(where, e);
   const msg = String(e?.message || e);
+  if (e?.stale) { await logEvent(env, 'bot', 'stale', null, `${where}: ${msg}`).catch(() => {}); return; } // a double tap or an outdated result
+  console.error(where, e);
   try {
     const transient = TRANSIENT.test(msg);
     await logEvent(env, 'bot', transient ? 'error_transient' : 'error', null, `${where}: ${msg}`);
@@ -129,18 +132,27 @@ const priceSplit = (L, o) => (o.flight_price != null && o.flight_price !== o.tot
   ? ` (✈️ ${Math.round(o.flight_price)}${o.hotel_price_night != null ? ` + 🏨 ${Math.round(o.hotel_price_night)}${L.perNight}` : ''})` : '');
 
 // Booking links of an option: Aviasales (that fare, or a search for its dates), the airline's page, the hotel, Booking.com.
+// An Aviasales fare link opens that fare for one adult; for 2+ travelers the search link (with the passenger count) is used.
+const isAviasales = (u) => { try { return /(^|\.)aviasales\.(uz|ru|com|kz|kg|by|tj)$/.test(new URL(u).hostname); } catch { return false; } };
 function optionLinks(env, L, t, o) {
   const flight = safeUrl(o.flight_link);
-  const avia = flight && /aviasales\./.test(flight) ? flight : aviasalesUrl(env, t.fields, o);
+  const avia = flight && isAviasales(flight) && (Number(t.fields.travelers) || 1) <= 1 ? flight : aviasalesUrl(env, t.fields, o);
   return [
-    ['Aviasales', avia], [L.linkAirline, flight && flight !== avia ? deepLink(flight) : null],
+    ['Aviasales', avia], [L.linkAirline, flight && !isAviasales(flight) ? deepLink(flight) : null],
     [L.linkHotel, deepLink(safeUrl(o.hotel_link))], ['Booking.com', o.hotel ? bookingComUrl(t.fields, o) : null],
   ].filter(([, u]) => u);
 }
 // A site's home page ("https://www.csair.com", ".../en/") opens nothing useful: only links to a specific page are shown.
+// Home-page paths: "/", "/en", "/en-int/", "/uz/ru/", "/index.html", "/home"; tracking-only queries (utm_*) do not count.
 function deepLink(u) {
   if (!u) return null;
-  try { const p = new URL(u); return p.search || !/^\/?([a-z]{2}([-_][a-z]{2})?\/?)?$/i.test(p.pathname) ? u : null; } catch { return null; }
+  try {
+    const p = new URL(u);
+    if (p.protocol !== 'https:') return null;
+    const query = [...p.searchParams.keys()].filter((k) => !/^(utm_|gclid|fbclid|ref$|lang$|locale$)/i.test(k));
+    const home = /^\/?(([a-z]{2}([-_][a-z]{2,4})?)\/){0,2}([a-z]{2}([-_][a-z]{2,4})?|index\.html?|home|main)?\/?$/i.test(p.pathname);
+    return query.length || !home ? u : null;
+  } catch { return null; }
 }
 const href = (u) => u.replace(/&/g, '&amp;').replace(/"/g, '&quot;');
 function linksLine(env, L, t, o) {
@@ -152,15 +164,18 @@ async function tripText(env, L, lang, t) {
   const o = t.offers[t.chosen] || {}, f = t.fields;
   const rem = await all(env, 'SELECT * FROM reminders WHERE trip_id = ? ORDER BY due_at', t.id);
   return [
-    `<b>${L.booked}: ${esc(f.origin || L.origin)} → ${esc(f.destination)}</b> · ${t.code}`, '',
+    `<b>${L.booked}: ${esc(f.origin || L.origin)} → ${esc(f.destination || '?')}</b> · ${t.code}`, '',
     `${L.out}: ${dshort(f.date_from, lang)}${o.outbound ? ' · ' + esc(o.outbound) : ''}${o.airline ? ' · ' + esc(o.airline) : ''}`,
-    `${L.back}: ${o.return ? esc(o.return) : dshort(f.date_to, lang)}`,
+    ...(o.return || f.date_to ? [`${L.back}: ${o.return ? esc(o.return) : dshort(f.date_to, lang)}`] : []),
     `${L.hotel}: ${esc([o.hotel, o.distance].filter(Boolean).join(' · ') || L.seeVoucher)}`,
     `${L.total}: ${esc(money(o, lang))} · ${esc(refundWord(o.refund, lang))}`, '',
     rem.length ? `${L.reminders}:\n` + rem.map((r) => `· ${r.type === 'checkin' ? L.remCheckin : L.remLeave}: ${fmtLocal(env, r.due_at, lang)}`).join('\n')
       : L.noFlightTime,
   ].join('\n');
 }
+
+// Which list of options a button belongs to: after a new search, the old message's buttons must not pick from the new list.
+const offersVer = (t) => ((t.offers_at || 0) % 46656).toString(36);
 
 const STEP_ORDER = ['draft', 'sent', 'offers', 'chosen', 'booked', 'done'];
 // In search mode a few steps read differently (no agent).
@@ -241,7 +256,7 @@ export async function handleOwnerMessage(env, msg) {
 
   // A button asked for this message (translate mode, a letter, a note for the agent, ...)
   // Conversation memory: the recent chat (read before this message is logged), and this message.
-  const history = await recentChat(env, uid);
+  const history = await recentChat(env, uid, 20, msg.from.first_name);
   const kind = msg.voice || msg.audio ? '[voice note]' : msg.video_note ? '[video message]' : msg.photo ? '[photo]' : msg.document ? `[file ${msg.document.file_name || ''}]` : '';
   const logId = await logChat(env, uid, 'in', [kind, text].filter(Boolean).join(' '));
 
@@ -250,12 +265,14 @@ export async function handleOwnerMessage(env, msg) {
 
   // Otherwise Gemini decides what the message is for.
   const t = await activeTrip(env, uid);
+  // A request still being filled in, untouched for 2 days, is not continued: a new trip message starts a fresh one.
+  const filling = t && ['collecting', 'draft'].includes(t.status) && t.updated_at > Date.now() - 2 * DAY ? t : null;
   let r;
   try { r = await whileTyping(env, chat, () => routeMessage(env, text, media, { lang, trip: t && { code: t.code, status: t.status, destination: t.fields.destination }, pending: mode?.arg || null, history, name: msg.from.first_name || null })); }
   catch (e) {
     await reportError(env, e, 'routeMessage');
     // While a trip request is being filled in, a message that could not be routed is most likely part of it.
-    if (t && ['collecting', 'draft'].includes(t.status) && !isVoice) return buildRequest(env, uid, chat, t, text, media, L, lang, null, history);
+    if (filling && !isVoice) return buildRequest(env, uid, chat, filling, text, media, L, lang, null, history);
     return send(env, chat, L.readFail);
   }
   if (mode) await clearMode(env, uid);
@@ -268,10 +285,10 @@ export async function handleOwnerMessage(env, msg) {
   await logEvent(env, 'owner', 'route', t?.id ?? null, r.intent);
 
   switch (r.intent) {
-    case 'trip': return buildRequest(env, uid, chat, t && ['collecting', 'draft'].includes(t.status) ? t : null, useText, useMedia, L, lang, isVoice ? r.transcript : null, history);
+    case 'trip': return buildRequest(env, uid, chat, filling, useText, useMedia, L, lang, isVoice ? r.transcript : null, history);
     case 'trip_note': {
       const row = await one(env, `SELECT id FROM trips WHERE owner_id = ? AND status IN ('sent', 'offers', 'chosen', 'booked') ORDER BY id DESC LIMIT 1`, uid);
-      if (!row) return buildRequest(env, uid, chat, t && ['collecting', 'draft'].includes(t.status) ? t : null, useText, useMedia, L, lang, isVoice ? r.transcript : null, history);
+      if (!row) return buildRequest(env, uid, chat, filling, useText, useMedia, L, lang, isVoice ? r.transcript : null, history);
       const tn = await getTrip(env, row.id);
       if (isSearch(env)) {
         // No agent: a new wish changes the search (while choosing), otherwise there is no one to tell.
@@ -288,8 +305,8 @@ export async function handleOwnerMessage(env, msg) {
       if (media.length) {
         try { tk = await whileTyping(env, chat, () => parseTicket(env, media, lang)); } catch (e) { await reportError(env, e, 'parseTicket'); }
       }
-      const row = await one(env, `SELECT id FROM trips WHERE owner_id = ? AND status IN ('chosen', 'booked', 'offers', 'sent') ORDER BY id DESC LIMIT 1`, uid);
-      let td = row && (await getTrip(env, row.id));
+      const legs = (tk?.is_ticket && tk.flights || []).filter((x) => isDateTime(x.departure_local));
+      let td = await tripForTicket(env, uid, legs);
       if (!td && tk?.is_ticket && tk.flights?.some((x) => isDateTime(x.departure_local))) td = await tripFromTicket(env, uid, tk, L); // booked elsewhere
       if (!td) return send(env, chat, L.ticketNoTrip);
       await run(env, 'INSERT INTO documents (trip_id, name, file_id, created_at) VALUES (?, ?, ?, ?)', td.id, msg.document?.file_name || 'photo.jpg', file.file_id, Date.now());
@@ -305,10 +322,14 @@ export async function handleOwnerMessage(env, msg) {
     }
     case 'trip_cancel':
       if (!t) return send(env, chat, L.noCancel);
-      return ['collecting', 'draft'].includes(t.status) ? cancelTrip(env, t, 'owner') : askCancel(env, t);
+      { // With more than one open trip, "cancel" may mean another one: ask first (the question names the trip).
+        const open = (await one(env, `SELECT COUNT(*) c FROM trips WHERE owner_id = ? AND status IN (${OPEN.map(() => '?').join(', ')})`, uid, ...OPEN)).c;
+        return ['collecting', 'draft'].includes(t.status) && open === 1 ? cancelTrip(env, t, 'owner') : askCancel(env, t);
+      }
     case 'event':
       if (r.question || !isDate(r.ev_date)) return askAgain(r.question || L.chatFallback);
-      return addEvent(env, uid, chat, L, lang, r);
+      if (!(await addEvent(env, uid, chat, L, lang, r))) return askAgain(L.eventPast);
+      return;
     case 'reminder':
       if (r.question || !isDate(r.rm_date)) return askAgain(r.question || L.chatFallback);
       if (!(await addReminder(env, uid, chat, L, lang, r))) return askAgain(L.reminderPast);
@@ -368,15 +389,31 @@ async function setFlightTime(env, uid, chat, L, lang, tripId, said) {
   if (!t || t.owner_id !== uid) return send(env, chat, L.staleBtn);
   let w;
   try { w = await parseWhen(env, said || ''); } catch (e) { await reportError(env, e, 'parseWhen'); return send(env, chat, L.readFail); }
-  if (!isDate(w.date) || !isTime(w.time)) { await setMode(env, uid, 'flight_time', tripId); return send(env, chat, L.flightTimeBad); }
-  t.flight_at = localToUtc(env, `${w.date}T${w.time}`);
+  // Not a date and time: say so once, with the button to try again; the next message is handled normally.
+  if (!isDate(w.date) || !isTime(w.time)) return send(env, chat, L.flightTimeBad, kb([[[L.btnFlightTime, `tf:${t.id}`]]]));
+  if (!['sent', 'offers', 'chosen', 'booked'].includes(t.status)) return send(env, chat, L.staleBtn);
+  await logEvent(env, 'owner', 'flight_time', t.id, `${w.date}T${w.time}`);
+  if (t.chosen == null || !t.offers[t.chosen]) { t.offers.push({ label: L.ticketWord, refund: 'unknown' }); t.chosen = t.offers.length - 1; }
   const o = t.offers[t.chosen];
-  if (o) o.outbound_datetime = `${w.date}T${w.time}`;
+  o.outbound_datetime = `${w.date}T${w.time}`; o.date_out = w.date;
+  if (o.outbound && !o.outbound.startsWith(w.time)) o.outbound = w.time;
+  if (t.status !== 'booked') { // he booked it (a ticket without a readable time, or he typed the time): it is booked now
+    t.fields.date_from = w.date;
+    return finishBooking(env, t, 'ticket');
+  }
+  t.fields.date_from = w.date;
+  t.flight_at = localToUtc(env, o.outbound_datetime);
+  t.done_at = doneAt(env, t);
   await saveTrip(env, t);
   await run(env, 'DELETE FROM reminders WHERE trip_id = ? AND sent_at IS NULL', t.id);
   await scheduleFlightReminders(env, t);
-  await logEvent(env, 'owner', 'flight_time', t.id, `${w.date}T${w.time}`);
   return send(env, chat, `${L.flightTimeSet}\n\n${await tripText(env, L, lang, t)}`);
+}
+
+// When a booked trip closes by itself: the day after the return, or 2 days after a one-way (or undated) flight.
+function doneAt(env, t) {
+  const back = t.fields.one_way ? null : localToUtc(env, t.fields.date_to);
+  return back != null ? back + DAY : (t.flight_at ? t.flight_at + 2 * DAY : null);
 }
 
 async function scheduleFlightReminders(env, t) {
@@ -430,7 +467,7 @@ async function tripCard(env, chat, L, lang, t) {
 }
 
 function offersMessage(env, t, L, lang) {
-  const rows = t.offers.map((o, i) => [[`${i === t.recommended ? '★ ' : ''}${o.label} · ${money(o, lang)}`, `ch:${t.id}:${i}`]]);
+  const rows = t.offers.map((o, i) => [[`${i === t.recommended ? '★ ' : ''}${o.label} · ${money(o, lang)}`, `ch:${t.id}:${i}:${offersVer(t)}`]]);
   rows.push([[L.btnOther, `ot:${t.id}`]]);
   return send(env, t.owner_id, compareText(env, L, lang, t), kb(rows));
 }
@@ -445,7 +482,10 @@ async function buildRequest(env, uid, chat, t, text, media, L, lang, heardText =
   catch (e) { await reportError(env, e, 'parseRequest'); return send(env, chat, L.readFail); }
 
   // Take Gemini's values, then drop anything that cannot be right.
+  const before = { ...t.fields };
   for (const k of FIELD_KEYS) if (r[k] != null && r[k] !== '') t.fields[k] = r[k];
+  if (r.date_to && r.one_way !== true) t.fields.one_way = false; // he gave a return date: not one-way any more
+  if (r.date_from && r.date_from !== before.date_from && !r.date_flex) { delete t.fields.date_flex; delete t.fields.window_from; delete t.fields.window_to; }
   for (const k of ['date_from', 'date_to', 'window_from', 'window_to']) if (t.fields[k] && !isDate(t.fields[k])) delete t.fields[k];
   for (const k of ['origin_iata', 'destination_iata']) if (t.fields[k] && !/^[A-Z]{3}$/.test(t.fields[k])) delete t.fields[k];
   if (t.fields.date_from && t.fields.date_to && t.fields.date_to < t.fields.date_from) delete t.fields.date_to;
@@ -590,7 +630,9 @@ const ADMIN = {
 export async function handleCallback(env, cq) {
   const uid = cq.from.id, chat = cq.message?.chat.id, data = cq.data || '';
   const answer = (text) => tg(env, 'answerCallbackQuery', { callback_query_id: cq.id, ...(text ? { text } : {}) }).catch(() => {});
-  const dropKeyboard = () => tg(env, 'editMessageReplyMarkup', { chat_id: chat, message_id: cq.message.message_id, reply_markup: { inline_keyboard: [] } }).catch(() => {});
+  // Resolves true if the buttons were removed now, false if they were already gone (a second tap).
+  const dropKeyboard = () => tg(env, 'editMessageReplyMarkup', { chat_id: chat, message_id: cq.message.message_id, reply_markup: { inline_keyboard: [] } })
+    .then(() => true, (e) => !/message is not modified|message to edit not found/i.test(String(e?.message)));
   const { lang, L } = await strings(env, uid);
   if (['ma', 'mx', 'mr'].includes(data.split(':')[0])) { // the owner's access buttons
     if (!isMaintainer(env, uid)) return answer(L.notAllowed);
@@ -598,14 +640,18 @@ export async function handleCallback(env, cq) {
   }
   if (!isOwner(env, uid)) return answer(L.notAllowed);
 
-  const [a, idStr, argStr] = data.split(':');
+  const [a, idStr, argStr, verStr] = data.split(':');
   const label = (cq.message?.reply_markup?.inline_keyboard || []).flat().find((b) => b.callback_data === data)?.text;
   await logChat(env, uid, 'in', `[tapped: ${label || data}]`);
   if (a === 'lg') { await answer(); await dropKeyboard(); return chooseLanguage(env, uid, chat, idStr); }
   if (a === 'nt') { await answer(); return send(env, chat, L.whereWhenVoice); }
   if (a === 'mt') { await answer(); return myTrips(env, L, lang, uid, chat); }
   if (a === 'st') { await answer(); const t = await activeTrip(env, uid); return send(env, chat, t ? statusText(env, L, lang, t) : L.noTrip); }
-  if (a === 'doc') { await answer(); const d = await one(env, 'SELECT * FROM documents WHERE id = ?', +idStr); return d && tg(env, 'sendDocument', { chat_id: chat, document: d.file_id, caption: d.name }); }
+  if (a === 'doc') {
+    const d = await one(env, 'SELECT d.* FROM documents d JOIN trips t ON t.id = d.trip_id WHERE d.id = ? AND t.owner_id = ?', +idStr, uid);
+    await answer(d ? undefined : L.staleBtn);
+    return d && tg(env, 'sendDocument', { chat_id: chat, document: d.file_id, caption: d.name });
+  }
   if (await handleSecCallback(env, { a, id: idStr, arg: argStr, uid, chat, L, lang, answer, dropKeyboard })) return;
 
   // My trips: a trip's card and what can be done from it
@@ -650,7 +696,7 @@ export async function handleCallback(env, cq) {
 
   const t = await getTrip(env, +idStr);
   const need = { ap: 'draft', ed: 'draft', ch: 'offers', ot: 'offers' }[a];
-  if (!t || t.owner_id !== uid || (need && t.status !== need) || (['cy', 'cn'].includes(a) && !['collecting', ...WITH_AGENT, 'draft'].includes(t.status))) {
+  if (!t || t.owner_id !== uid || (need && t.status !== need) || (a === 'ch' && verStr != null && verStr !== offersVer(t)) || (['cy', 'cn'].includes(a) && !['collecting', ...WITH_AGENT, 'draft'].includes(t.status))) {
     await answer(L.staleBtn);
     return dropKeyboard();
   }
@@ -776,25 +822,37 @@ async function getTripByThread(env, threadId) {
 }
 
 // Used by both the real group and the mock agent.
+// The trip in the database is no longer the one this copy was read from: he cancelled, booked, or asked for a new
+// search while this one ran. The result is outdated; drop it.
+async function outdated(env, t) {
+  const cur = await one(env, 'SELECT status, sent_at FROM trips WHERE id = ?', t.id);
+  return !cur || cur.status !== t.status || (cur.sent_at ?? null) !== (t.sent_at ?? null);
+}
+
 export async function handleAgentText(env, t, text, media) {
+  if (await outdated(env, t)) throw new StaleTrip(`${t.code}: agent/search result dropped, trip changed meanwhile`);
   const { lang, L } = await strings(env, t.owner_id);
   await logEvent(env, 'agent', 'message', t.id, text || '(file)');
   if (['chosen', 'booked'].includes(t.status)) {
-    if (text) await send(env, t.owner_id, `<b>${L.agentMsg}</b> · ${t.code}\n${esc(text)}`);
+    if (text) await sendLong(env, t.owner_id, `<b>${L.agentMsg}</b> · ${t.code}\n${esc(text)}`);
     return;
   }
   if (!['sent', 'offers'].includes(t.status)) return;
 
   if (text) t.agent_texts.push(text);
-  await saveTrip(env, t);
+  if (!(await saveTrip(env, t, t.status))) throw new StaleTrip();
 
   let r;
   try { r = await parseOffers(env, t.fields, t.agent_texts, media, lang); }
-  catch (e) { await reportError(env, e, 'parseOffers'); return send(env, t.owner_id, `${L.agentUnreadable(t.code)}\n${esc(text || L.file)}`); }
+  catch (e) {
+    if (isSearch(env)) throw e; // the search retries, then offers a retry button
+    await reportError(env, e, 'parseOffers'); return sendLong(env, t.owner_id, `${L.agentUnreadable(t.code)}\n${esc(text || L.file)}`);
+  }
 
   const offers = Array.isArray(r.offers) ? r.offers.slice(0, 5) : [];
   if (!offers.length) {
-    return send(env, t.owner_id, `<b>${L.agentWrote}</b> · ${t.code}\n${esc(text || L.file)}`);
+    if (isSearch(env)) throw new Error('search found no usable options');
+    return sendLong(env, t.owner_id, `<b>${L.agentWrote}</b> · ${t.code}\n${esc(text || L.file)}`);
   }
   if (media.length) t.agent_texts.push('[Options read from the agent’s attachment] ' + JSON.stringify(offers));
   t.offers = offers;
@@ -825,8 +883,10 @@ export async function handleAgentText(env, t, text, media) {
     return send(env, t.owner_id, L.offersPending(esc(t.fields.destination), offers.length));
   }
 
+  if (await outdated(env, t)) throw new StaleTrip(`${t.code}: options dropped, trip changed during parsing`);
   t.offers_at = Date.now(); t.nudged_offers = 0;
-  if (t.status !== 'offers') await setStatus(env, t, 'offers', 'agent'); else await saveTrip(env, t);
+  if (t.status !== 'offers') await setStatus(env, t, 'offers', 'agent');
+  else if (!(await saveTrip(env, t, 'offers'))) throw new StaleTrip();
   return offersMessage(env, t, L, lang);
 }
 
@@ -861,14 +921,16 @@ async function bookingLinks(env, t, L, justChosen = false) {
 async function finishBooking(env, t, source = 'agent') {
   const { lang, L } = await strings(env, t.owner_id);
   const o = t.offers[t.chosen] || {};
-  // Flexible dates become the dates of the chosen option.
-  if (!isDate(t.fields.date_from) && isDate(o.date_out)) t.fields.date_from = o.date_out;
-  if (!isDate(t.fields.date_to) && isDate(o.date_back)) t.fields.date_to = o.date_back;
+  // The booked option's dates are the trip's dates (flexible dates, or a search that found the nearest day).
+  const outDay = isDateTime(o.outbound_datetime) ? o.outbound_datetime.slice(0, 10) : o.date_out;
+  if (isDate(outDay)) t.fields.date_from = outDay;
+  if (isDate(o.date_back) && !t.fields.one_way && o.date_back >= (t.fields.date_from || '')) t.fields.date_to = o.date_back;
+  if (isDate(t.fields.date_from)) { delete t.fields.date_flex; delete t.fields.window_from; delete t.fields.window_to; }
   t.flight_at = localToUtc(env, o.outbound_datetime) ?? null;
-  const back = localToUtc(env, t.fields.date_to);
-  // Closed the day after the return; a one-way or undated booking closes 2 days after the flight.
-  t.done_at = back != null ? back + DAY : (t.flight_at ? t.flight_at + 2 * DAY : null);
+  t.done_at = doneAt(env, t);
   await setStatus(env, t, 'booked', 'agent');
+  await run(env, 'DELETE FROM reminders WHERE trip_id = ? AND sent_at IS NULL', t.id);
+  await run(env, 'UPDATE jobs SET done_at = ? WHERE trip_id = ? AND done_at IS NULL', Date.now(), t.id); // no search after booking
   await scheduleFlightReminders(env, t);
   const timeHint = source === 'search' && t.flight_at ? `\n\n${L.checkTimeHint}` : '';
   await send(env, t.owner_id, (await tripText(env, L, lang, t)) + timeHint, kb([[[t.flight_at ? L.btnChangeTime : L.btnFlightTime, `tf:${t.id}`]]]));
@@ -930,17 +992,54 @@ async function memberButton(env, data, chat, answer, dropKeyboard) {
 
 const isDateTime = (s) => /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(s || '');
 
+// A ticket's legs: outbound, and the return if it comes back to where it started. With connections
+// (TAS-IST-LHR-IST-TAS) the return starts after the longest gap between legs, i.e. the stay.
+function ticketLegs(fl) {
+  const first = fl[0], last = fl.at(-1);
+  if (fl.length < 2 || !last.to_iata || last.to_iata !== first.from_iata) return { out: fl, back: null };
+  let split = fl.length - 1, gap = -1;
+  for (let i = 1; i < fl.length; i++) {
+    const g = Date.parse(fl[i].departure_local.slice(0, 16)) - Date.parse((isDateTime(fl[i - 1].arrival_local) ? fl[i - 1].arrival_local : fl[i - 1].departure_local).slice(0, 16));
+    if (g > gap) { gap = g; split = i; }
+  }
+  return { out: fl.slice(0, split), back: fl[split] };
+}
+
+// The trip a ticket belongs to: among his open trips, the one with its destination or dates; none if it clearly
+// matches none of them (booked elsewhere); the newest if nothing can be compared.
+async function tripForTicket(env, uid, fl) {
+  const trips = [];
+  for (const r of await all(env, `SELECT id FROM trips WHERE owner_id = ? AND status IN ('chosen', 'booked', 'offers', 'sent') ORDER BY id DESC`, uid)) trips.push(await getTrip(env, r.id));
+  if (!fl.length) return trips[0] || null;
+  const day = fl[0].departure_local.slice(0, 10), iatas = fl.map((x) => x.to_iata).filter(Boolean);
+  const near = (d) => isDate(d) && Math.abs(Date.parse(d) - Date.parse(day)) <= 3 * DAY;
+  let best = null, bestScore = 0, comparable = 0;
+  for (const t of trips) {
+    const f = t.fields;
+    // Dates decide (a second trip to the same city is another trip); the destination helps when there are no dates.
+    let score = 0, known = false, datesOk = null;
+    const dates = [f.date_from, ...t.offers.map((o) => o.date_out)].filter(isDate);
+    if (dates.length) datesOk = dates.some(near);
+    else if (isDate(f.window_from)) datesOk = day >= addDaysISO(f.window_from, -3) && day <= addDaysISO(f.window_to || f.window_from, 3);
+    if (datesOk != null) { known = true; score += datesOk ? 2 : -10; }
+    if (f.destination_iata) { known = true; if (iatas.includes(f.destination_iata)) score += 1; }
+    if (known) comparable++;
+    if (score > bestScore) { best = t; bestScore = score; }
+  }
+  if (best) return best;
+  return trips.length && comparable === trips.length ? null : trips[0] || null;
+}
+
 // A ticket for a trip the bot does not know (booked elsewhere): create the trip from it.
 async function tripFromTicket(env, uid, tk, L) {
   const fl = tk.flights.filter((x) => isDateTime(x.departure_local));
-  const first = fl[0], back = fl.length > 1 && fl.at(-1).to_iata && fl.at(-1).to_iata === first.from_iata ? fl.at(-1) : null;
-  const out = back ? fl[fl.indexOf(back) - 1] || first : fl.at(-1);
+  const first = fl[0], { out: outLegs, back } = ticketLegs(fl), out = outLegs.at(-1);
   const t = await createTrip(env, uid);
   t.fields = {
-    origin: first.from_city || L.origin, destination: out.to_city || first.to_city, origin_iata: first.from_iata || null, destination_iata: out.to_iata || null,
+    origin: first.from_city || L.origin, destination: out.to_city || out.to_iata || first.to_city || first.to_iata || '?', origin_iata: first.from_iata || null, destination_iata: out.to_iata || null,
     date_from: first.departure_local.slice(0, 10), date_to: back ? back.departure_local.slice(0, 10) : null, one_way: !back, travelers: 1, notes: tk.booking_ref ? `Bron: ${tk.booking_ref}` : null,
   };
-  t.offers = [{ label: first.flight_number || first.airline || 'Ticket', airline: [first.airline, first.flight_number].filter(Boolean).join(' '), refund: 'unknown' }];
+  t.offers = [{ label: first.flight_number || first.airline || L.ticketWord, airline: [first.airline, first.flight_number].filter(Boolean).join(' '), refund: 'unknown' }];
   t.chosen = 0;
   await setStatus(env, t, 'chosen', 'owner');
   await logEvent(env, 'owner', 'trip_from_ticket', t.id);
@@ -954,10 +1053,9 @@ async function applyTicket(env, t, tk, L, lang, chat) {
     await send(env, chat, `${L.docSaved(t.code)}\n${L.ticketNoTime}`, kb([[[L.btnFlightTime, `tf:${t.id}`]]]));
     return t.status === 'chosen' ? finishBooking(env, t, 'search') : undefined;
   }
-  const first = fl[0];
-  const back = fl.length > 1 && fl.at(-1).to_iata && fl.at(-1).to_iata === first.from_iata ? fl.at(-1) : null;
+  const first = fl[0], { back } = ticketLegs(fl);
   if (t.chosen == null || !t.offers[t.chosen]) { // he booked something else than the options: take the ticket as the choice
-    t.offers.push({ label: first.flight_number || first.airline || 'Ticket', airline: first.airline, refund: 'unknown' });
+    t.offers.push({ label: first.flight_number || first.airline || L.ticketWord, airline: first.airline, refund: 'unknown' });
     t.chosen = t.offers.length - 1;
   }
   const o = t.offers[t.chosen];
@@ -970,6 +1068,7 @@ async function applyTicket(env, t, tk, L, lang, chat) {
   const line = L.ticketRead(esc(first.flight_number || first.airline || ''), fmtLocal(env, localToUtc(env, o.outbound_datetime), lang));
   if (t.status === 'booked') { // already booked: correct the time and the reminders
     t.flight_at = localToUtc(env, o.outbound_datetime);
+    t.done_at = doneAt(env, t);
     await saveTrip(env, t);
     await run(env, 'DELETE FROM reminders WHERE trip_id = ? AND sent_at IS NULL', t.id);
     await scheduleFlightReminders(env, t);
@@ -1009,35 +1108,43 @@ export async function runChecks(env) {
   }
 
   for (const rem of await all(env, `SELECT r.* FROM reminders r JOIN trips t ON t.id = r.trip_id WHERE r.sent_at IS NULL AND r.due_at <= ? AND t.status = 'booked'`, now)) {
-    await run(env, 'UPDATE reminders SET sent_at = ? WHERE id = ?', now, rem.id);
+    if (!(await claim(env, 'UPDATE reminders SET sent_at = ? WHERE id = ? AND sent_at IS NULL', now, rem.id))) continue;
     const t = await getTrip(env, rem.trip_id), o = t.offers[t.chosen] || {};
+    if (rem.due_at < now - 6 * HOUR) continue; // far too late (the bot was down): an old reminder would only confuse
     const { L } = await strings(env, t.owner_id);
-    await logEvent(env, 'cron', 'reminder_' + rem.type, t.id);
     const doc = await one(env, 'SELECT id FROM documents WHERE trip_id = ? ORDER BY id LIMIT 1', t.id);
-    if (rem.type === 'checkin') {
-      await send(env, t.owner_id, L.checkin(route(L, t), esc([o.airline, o.outbound].filter(Boolean).join(', ') || hmLocal(env, t.flight_at))), doc ? kb([[[L.btnTicket, `doc:${doc.id}`]]]) : {});
-    } else {
-      await send(env, t.owner_id, L.leave(route(L, t), hmLocal(env, t.flight_at)));
-    }
+    try {
+      await sendOrRelease(env, () => (rem.type === 'checkin'
+      ? send(env, t.owner_id, L.checkin(route(L, t), esc([o.airline, o.outbound].filter(Boolean).join(', ') || hmLocal(env, t.flight_at))), doc ? kb([[[L.btnTicket, `doc:${doc.id}`]]]) : {})
+      : send(env, t.owner_id, L.leave(route(L, t), hmLocal(env, t.flight_at)))),
+      () => run(env, 'UPDATE reminders SET sent_at = NULL WHERE id = ?', rem.id));
+    } catch (e) { await reportError(env, e, 'flight reminder'); continue; }
+    await logEvent(env, 'cron', 'reminder_' + rem.type, t.id);
   }
 
   // Requests whose dates have passed without a booking (still searching, choosing, or chosen but never booked) and that
   // nobody has touched for a day: close them quietly so they stop showing up. "Passed": the departure date, or the end
   // of a flexible window, was before yesterday.
   const yesterday = localISODate(env, now - DAY);
-  for (const r of await all(env, `SELECT id FROM trips WHERE status IN ('collecting', 'draft', 'sent', 'offers', 'chosen')
-      AND COALESCE(json_extract(fields, '$.date_from'), json_extract(fields, '$.window_to')) < ? AND updated_at < ?`, yesterday, now - DAY)) {
-    const t = await getTrip(env, r.id);
-    await run(env, 'UPDATE jobs SET done_at = ? WHERE trip_id = ? AND done_at IS NULL', now, t.id);
-    await setStatus(env, t, 'cancelled', 'cron');
-    await logEvent(env, 'cron', 'expired', t.id);
+  // Also requests with no usable date that nobody touched for a while (3 days unfinished, 14 days unbooked).
+  for (const r of await all(env, `SELECT id FROM trips WHERE (status IN ('collecting', 'draft', 'sent', 'offers', 'chosen')
+      AND COALESCE(json_extract(fields, '$.date_from'), json_extract(fields, '$.window_to')) < ? AND updated_at < ?)
+      OR (status IN ('collecting', 'draft') AND updated_at < ?) OR (status IN ('sent', 'offers', 'chosen') AND updated_at < ?)`, yesterday, now - DAY, now - 3 * DAY, now - 14 * DAY)) {
+    try {
+      const t = await getTrip(env, r.id);
+      await setStatus(env, t, 'cancelled', 'cron');
+      await run(env, 'UPDATE jobs SET done_at = ? WHERE trip_id = ? AND done_at IS NULL', now, t.id);
+      await logEvent(env, 'cron', 'expired', t.id);
+    } catch (e) { await reportError(env, e, 'expire trip'); }
   }
 
   for (const r of await all(env, `SELECT id FROM trips WHERE status = 'booked' AND done_at IS NOT NULL AND done_at <= ?`, now)) {
-    const t = await getTrip(env, r.id);
-    const { L } = await strings(env, t.owner_id);
-    await setStatus(env, t, 'done', 'cron');
-    await send(env, t.owner_id, L.welcomeBack(esc(t.fields.destination), t.code));
+    try {
+      const t = await getTrip(env, r.id);
+      const { L } = await strings(env, t.owner_id);
+      await setStatus(env, t, 'done', 'cron');
+      await send(env, t.owner_id, L.welcomeBack(esc(t.fields.destination || ''), t.code));
+    } catch (e) { await reportError(env, e, 'close trip'); }
   }
 
   // Watchdog: an owner message still unfinished after 2 minutes was cut off (time limit). Say so; alert the maintainer.

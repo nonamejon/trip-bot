@@ -3,12 +3,12 @@
 // 1. Gemini with Google Search writes 3 real options as plain text, like an agent would (flights with numbers and
 //    times, baggage, approximate price, terms, a hotel, booking URLs).
 // 2. That text goes through the same parsing and comparison as an agent's reply (flow.handleAgentText).
-// 3. Each option also gets links that always work: a live Google Flights search and a Booking.com search for the
-//    exact dates. Prices from web search are approximate; the links show the live price.
+// 3. With TRAVELPAYOUTS_TOKEN the flights come from real Aviasales fares (aviasales.js). Each option links to an
+//    Aviasales search and a Booking.com search for its exact dates; the links show the live price.
 //
 // It runs as a cron job (jobs table, kind search_offers): a search takes 30-60 s, too long for the webhook.
 
-import { run, getTrip, logEvent, strings, MIN } from './util.js';
+import { run, one, getTrip, logEvent, strings, MIN } from './util.js';
 import { gemini } from './gemini.js';
 import { handleAgentText, reportError } from './flow.js';
 import { send, kb } from './telegram.js';
@@ -18,14 +18,6 @@ const isDate = (s) => /^\d{4}-\d{2}-\d{2}$/.test(s || '');
 
 // ---------- links ----------
 export const safeUrl = (u) => (typeof u === 'string' && /^https?:\/\/[^\s"<>]+$/.test(u) && u.length < 1500 ? u : null);
-
-export function googleFlightsUrl(f, o = {}) {
-  const out = isDate(o.date_out) ? o.date_out : f.date_from;
-  if (!isDate(out)) return null;
-  const back = isDate(o.date_back) ? o.date_back : (f.one_way ? null : f.date_to);
-  const q = `Flights from ${f.origin_en || 'Tashkent'} to ${f.destination_en || f.destination} on ${out}${isDate(back) ? ` through ${back}` : ' one way'}${f.travelers > 1 ? ` for ${f.travelers} adults` : ''}`;
-  return `https://www.google.com/travel/flights?q=${encodeURIComponent(q)}&curr=USD`;
-}
 
 export function bookingComUrl(f, o = {}) {
   const inDate = isDate(o.date_out) ? o.date_out : f.date_from;
@@ -46,17 +38,19 @@ export async function queueSearch(env, t, payload = {}) {
 function searchPrompt(env, t, payload, fares = []) {
   const f = t.fields;
   const today = new Date(Date.now() + (Number(env.TZ_OFFSET_MIN) || 0) * 60e3).toISOString().slice(0, 10);
-  const wantsHotel = !f.one_way && !/mehmonxona kerak emas|отель не нужен|no hotel/i.test(`${f.hotel || ''} ${f.notes || ''}`);
+  // No return date and no flexible window: search one way, and no hotel (the number of nights is unknown).
+  const oneWay = !!f.one_way || (!isDate(f.date_to) && !f.date_flex && isDate(f.date_from));
+  const wantsHotel = !oneWay && !/mehmonxona kerak emas|отель не нужен|no hotel/i.test(`${f.hotel || ''} ${f.notes || ''}`);
   return `You are a travel agent in Tashkent searching for your client. Today is ${today}. Use Google Search to find real, currently scheduled options.
 
-The request (JSON): ${JSON.stringify({ from: f.origin, to: f.destination, date_from: f.date_from, date_to: f.date_to, flexible_dates: f.date_flex, one_way: !!f.one_way, travelers: f.travelers || 1, flight_wishes: f.flight_pref, baggage: f.baggage, hotel_wishes: f.hotel, budget: f.budget, notes: f.notes })}
+The request (JSON): ${JSON.stringify({ from: f.origin, to: f.destination, date_from: f.date_from, date_to: f.date_to, flexible_dates: f.date_flex, one_way: oneWay, travelers: f.travelers || 1, flight_wishes: f.flight_pref, baggage: f.baggage, hotel_wishes: f.hotel, budget: f.budget, notes: f.notes })}
 ${payload.note ? `His new wish: """${payload.note}"""` : ''}
 ${payload.previous ? `He has seen these options and wants different ones: ${payload.previous}` : ''}
 
-${fares.length ? `Real fares found on Aviasales for this request (JSON; prices in USD for all travelers, times local): ${JSON.stringify(fares)}
-Build the 3 flight options from these fares: use exactly their flights, times and prices, and give each fare's "link" as its booking URL. Use Google Search only to add details (airline name, baggage allowance, fare rules) and the hotels.
+${fares.length ? `Real fares found on Aviasales for this request (JSON; times local; "price" is USD per person, "price_total" is USD for all ${f.travelers || 1} traveler(s)): ${JSON.stringify(fares)}
+Build the 3 flight options from these fares: use exactly their flights and times, "price_total" as the flight price, and each fare's "link" as its booking URL. Use Google Search only to add details (airline name, baggage allowance, fare rules) and the hotels.
 ` : ''}Write 3 options numbered 1) 2) 3), making them differ (the cheapest, the best timing, the most comfortable). For each option:
-- airline and flight numbers; exact dates and local departure and arrival times for the outbound${f.one_way ? '' : ' and the return'} flight; direct, or where the connection is;
+- airline and flight numbers; exact dates and local departure and arrival times for the outbound${oneWay ? '' : ' and the return'} flight; direct, or where the connection is;
 - the baggage allowance of that fare;
 - the approximate total price in USD for all travelers${wantsHotel ? ', flights and hotel separately' : ''} (say it is approximate);
 - the usual change/refund terms of that fare;
@@ -78,12 +72,15 @@ export async function runSearch(env, job) {
     const text = await gemini(env, { prompt: searchPrompt(env, t, payload, fares), tools: [{ google_search: {} }], temperature: 0.3, timeoutMs: 90000 });
     await logEvent(env, 'bot', 'search_done', t.id, text.slice(0, 300));
     t.agent_texts = []; // only this search's results are parsed
-    await run(env, 'UPDATE trips SET agent_texts = ? WHERE id = ?', '[]', t.id);
     await handleAgentText(env, { ...t, agent_texts: [] }, text, []); // saves t.fields (price_source) with the offers
   } catch (e) {
+    if (e.stale) return reportError(env, e, 'search'); // he cancelled, booked or searched again meanwhile
     await reportError(env, e, 'search');
+    // Still waiting for this search? (not cancelled or searched again meanwhile)
+    const cur = await one(env, 'SELECT status, sent_at FROM trips WHERE id = ?', t.id);
+    if (!cur || cur.status !== 'sent' || cur.sent_at !== t.sent_at) return;
     const attempt = (payload.attempt || 0) + 1;
-    if (attempt < 2) {
+    if (attempt < (/location is not supported/i.test(String(e?.message)) ? 4 : 2)) { // a refused location: try from elsewhere
       await run(env, 'INSERT INTO jobs (kind, trip_id, payload, due_at) VALUES (?, ?, ?, ?)', 'search_offers', t.id, JSON.stringify({ ...payload, attempt }), Date.now() + MIN);
       return;
     }

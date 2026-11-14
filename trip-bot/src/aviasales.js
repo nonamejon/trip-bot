@@ -23,7 +23,8 @@ export function aviasalesUrl(env, f, o = {}) {
 }
 
 // Real fares for the request: the cheapest, with direct flights preferred when he asked for them. Each fare:
-// { airline, flight_number, depart (local "YYYY-MM-DDTHH:MM"), back, transfers, back_transfers, duration_min, price, currency, link }
+// { airline, flight_number, depart (local "YYYY-MM-DDTHH:MM"), back, transfers, back_transfers, duration_min,
+//   price (per person, as Aviasales gives it), travelers, price_total (all travelers), currency, link (one adult) }
 export async function fetchFares(env, f) {
   const token = env.TRAVELPAYOUTS_TOKEN;
   const from = iata(f.origin_iata) || 'TAS', to = iata(f.destination_iata);
@@ -54,11 +55,12 @@ export async function fetchFares(env, f) {
         .sort((a, b) => near(a.departure_at, f.date_from) - near(b.departure_at, f.date_from) || a.price - b.price);
     }
   }
+  const n = Math.min(Math.max(Number(f.travelers) || 1, 1), 9);
   let fares = data.map((d) => ({
     airline: d.airline, flight_number: d.flight_number ? `${d.airline} ${d.flight_number}` : null,
     depart: String(d.departure_at || '').slice(0, 16), back: d.return_at ? String(d.return_at).slice(0, 16) : null,
     transfers: d.transfers ?? null, back_transfers: d.return_transfers ?? null, duration_min: d.duration_to || d.duration || null,
-    price: d.price, currency: 'USD', link: d.link ? withMarker(env, `${host(env)}${d.link}`) : null,
+    price: d.price, travelers: n, price_total: d.price != null ? Math.round(d.price * n) : null, currency: 'USD', link: d.link ? withMarker(env, `${host(env)}${d.link}`) : null,
   }));
   // A flexible window: keep fares inside it.
   if (flexible) fares = fares.filter((x) => x.depart.slice(0, 10) >= f.window_from && (!f.window_to || (x.back || x.depart).slice(0, 10) <= f.window_to));

@@ -9,6 +9,10 @@ const clean = (args) => args.map((a) => (a === undefined ? null : a));
 export const one = (env, sql, ...a) => env.DB.prepare(sql).bind(...clean(a)).first();
 export const all = async (env, sql, ...a) => (await env.DB.prepare(sql).bind(...clean(a)).all()).results || [];
 export const run = (env, sql, ...a) => env.DB.prepare(sql).bind(...clean(a)).run();
+// A conditional UPDATE used as a lock: true only for the one caller whose statement changed a row.
+// Cron runs can overlap (a slow search, a slow Gemini call) and buttons can be tapped twice; this keeps every
+// reminder, brief and search to exactly one send.
+export const claim = async (env, sql, ...a) => ((await run(env, sql, ...a))?.meta?.changes ?? 0) > 0;
 
 export async function logEvent(env, actor, action, tripId = null, detail = null) {
   await run(env, 'INSERT INTO events (ts, actor, action, trip_id, detail) VALUES (?, ?, ?, ?, ?)',
@@ -73,15 +77,34 @@ export async function createTrip(env, ownerId) {
 const SAVE_COLS = ['status', 'fields', 'offers', 'agent_texts', 'recommended', 'reason', 'chosen', 'agent_thread_id', 'clarify_asked',
   'draft_at', 'nudged', 'sent_at', 'due_at', 'sla_reminded', 'offers_at', 'nudged_offers', 'flight_at', 'done_at'];
 
-export async function saveTrip(env, t) {
+// expectStatus: save only if the trip is still in that status in the database; returns whether it saved.
+export async function saveTrip(env, t, expectStatus = null) {
   const vals = SAVE_COLS.map((c) => (c in JSON_COLS ? JSON.stringify(t[c] ?? JSON_COLS[c]) : (typeof t[c] === 'boolean' ? (t[c] ? 1 : 0) : t[c])));
-  await run(env, `UPDATE trips SET ${SAVE_COLS.map((c) => c + ' = ?').join(', ')}, updated_at = ? WHERE id = ?`, ...vals, Date.now(), t.id);
+  const sql = `UPDATE trips SET ${SAVE_COLS.map((c) => c + ' = ?').join(', ')}, updated_at = ? WHERE id = ?`;
+  if (expectStatus == null) { await run(env, sql, ...vals, Date.now(), t.id); return true; }
+  return claim(env, sql + ' AND status = ?', ...vals, Date.now(), t.id, expectStatus);
 }
 
+// Send something the cron claimed. If Telegram did not take it for a passing reason (network, rate limit, a Telegram
+// outage), release the claim so the next minute tries again. Permanent refusals (he blocked the bot, a bad request)
+// are not retried, so one bad message never repeats every minute.
+export async function sendOrRelease(env, sendFn, releaseFn) {
+  try { return await sendFn(); } catch (e) {
+    if (!/Bad Request|Forbidden|chat not found|bot was blocked|user is deactivated/i.test(String(e?.message))) await releaseFn().catch(() => {});
+    throw e;
+  }
+}
+
+// Thrown when a trip changed under us (a double tap, a search finishing after he cancelled or searched again).
+// The webhook and the cron drop it silently: the newer action already answered him.
+export class StaleTrip extends Error { constructor(m = 'trip changed meanwhile') { super(m); this.stale = true; } }
+
+// A status change is atomic: it only happens if the trip is still in the status this copy was read in.
 export async function setStatus(env, t, status, actor = 'bot') {
   const from = t.status;
   t.status = status;
-  await saveTrip(env, t);
+  if (from === status) { await saveTrip(env, t); return; }
+  if (!(await saveTrip(env, t, from))) { t.status = from; throw new StaleTrip(`${t.code}: ${from} -> ${status} skipped, trip changed meanwhile`); }
   await logEvent(env, actor, 'status', t.id, `${from} -> ${status}`);
 }
 
@@ -169,9 +192,10 @@ export async function logChat(env, uid, dir, text) {
   return r.meta?.last_row_id ?? null;
 }
 // The last messages of the past day, oldest first, as "Azizbek: …" / "Bot: …" lines. Small on purpose (about 20 lines).
-export async function recentChat(env, uid, limit = 20) {
+export async function recentChat(env, uid, limit = 20, name = null) {
   const rows = await all(env, 'SELECT dir, text FROM chat_log WHERE owner_id = ? AND ts > ? ORDER BY id DESC LIMIT ?', uid, Date.now() - DAY, limit);
-  return rows.reverse().map((r) => `${r.dir === 'in' ? 'Azizbek' : 'Bot'}: ${r.text.slice(0, 600)}`).join('\n');
+  const who = String(name || 'User').replace(/[\n:]/g, ' ').slice(0, 40);
+  return rows.reverse().map((r) => `${r.dir === 'in' ? who : 'Bot'}: ${r.text.slice(0, 600)}`).join('\n');
 }
 
 // ---------- "what is the next message for" (translate mode, letter request, ...) ----------

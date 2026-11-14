@@ -3,7 +3,7 @@
 // code path as a real agent's messages (handleAgentText / handleAgentDocs).
 // It writes in AGENT_LANG; its test PDFs are in the owner's language.
 
-import { all, run, getTrip, localISODate, money, dshort, logEvent, strings } from './util.js';
+import { all, run, claim, getTrip, localISODate, money, dshort, logEvent, strings } from './util.js';
 import { gemini } from './gemini.js';
 import { handleAgentText, handleAgentDocs, templateText, reportError } from './flow.js';
 import { mirror, isMock, isSearch } from './agent.js';
@@ -16,7 +16,8 @@ export async function runJobs(env) {
   if (!isMock(env) && !isSearch(env)) return;
   const jobs = await all(env, 'SELECT * FROM jobs WHERE done_at IS NULL AND due_at <= ? ORDER BY due_at LIMIT 5', Date.now());
   for (const j of jobs) {
-    await run(env, 'UPDATE jobs SET done_at = ? WHERE id = ?', Date.now(), j.id); // claim first so a slow run never repeats it
+    // Claim first so a slow run never repeats it, and an overlapping cron run never takes the same job.
+    if (!(await claim(env, 'UPDATE jobs SET done_at = ? WHERE id = ? AND done_at IS NULL', Date.now(), j.id))) continue;
     try { await runJob(env, j); } catch (e) { await reportError(env, e, 'mock agent ' + j.kind); }
   }
 }

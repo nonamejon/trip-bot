@@ -29,6 +29,7 @@ export default {
       const work = handleUpdate(env, update)
         .then(() => true, async (e) => {
           if (e.duplicate) return false; // a repeated delivery of an update already being handled
+          if (e.stale) return true; // a double tap or an outdated button: the first one already answered
           await reportError(env, e, 'update ' + update.update_id);
           await apologize(env, update);
           return true;
@@ -49,7 +50,7 @@ export default {
       await tg(env, 'setMyCommands', { commands: COMMANDS.uz });
       await tg(env, 'setMyCommands', { commands: COMMANDS.ru, language_code: 'ru' });
       const me = await tg(env, 'getMe');
-      return Response.json({ webhook_set: hook, bot: '@' + me.username, agent_mode: isMock(env) ? 'mock' : 'group' });
+      return Response.json({ webhook_set: hook, bot: '@' + me.username, agent_mode: agentMode(env) });
     }
 
     // /cal/<user id>/<token>.ics; the older /cal/<token>.ics is the owner's
@@ -67,9 +68,10 @@ export default {
   async scheduled(event, env, ctx) {
     ctx.waitUntil((async () => {
       await loadMembers(env);
-      try { await runJobs(env); } catch (e) { await reportError(env, e, 'cron jobs'); }
-      try { await runChecks(env); } catch (e) { await reportError(env, e, 'cron checks'); }
+      // Quick, time-critical checks first; the searches (30-90 s each) last, so they never delay a reminder.
       try { await secretaryChecks(env); } catch (e) { await reportError(env, e, 'cron secretary'); }
+      try { await runChecks(env); } catch (e) { await reportError(env, e, 'cron checks'); }
+      try { await runJobs(env); } catch (e) { await reportError(env, e, 'cron jobs'); }
     })());
   },
 };

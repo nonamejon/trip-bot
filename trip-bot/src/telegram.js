@@ -63,18 +63,30 @@ export const replyKb = (rows) => ({ reply_markup: { keyboard: rows.map((r) => r.
 
 // Telegram allows 4096 characters per message. Split long text at line breaks; buttons go on the last part.
 export async function sendLong(env, chatId, text, extra = {}) {
-  const LIMIT = 3900;
-  if (text.length <= LIMIT) return send(env, chatId, text, extra);
-  const parts = [];
-  let cur = '';
-  for (const line of text.split('\n')) {
-    if ((cur + '\n' + line).length > LIMIT && cur) { parts.push(cur); cur = ''; }
-    let l = line;
-    while (l.length > LIMIT) { parts.push(l.slice(0, LIMIT)); l = l.slice(LIMIT); }
-    cur = cur ? cur + '\n' + l : l;
-  }
-  if (cur) parts.push(cur);
+  const parts = splitText(String(text), 3900);
   let last;
   for (let i = 0; i < parts.length; i++) last = await send(env, chatId, parts[i], i === parts.length - 1 ? extra : {});
   return last;
+}
+
+// Split at a line break, else a space, never inside an HTML tag or entity (&amp;) or between the two halves of an emoji.
+export function splitText(text, limit) {
+  const parts = [];
+  let rest = text;
+  while (rest.length > limit) {
+    let cut = rest.lastIndexOf('\n', limit);
+    if (cut < limit / 2) cut = rest.lastIndexOf(' ', limit);
+    if (cut < limit / 2) cut = limit;
+    const head = rest.slice(0, cut);
+    const lt = head.lastIndexOf('<'), amp = head.lastIndexOf('&');
+    if (lt > head.lastIndexOf('>')) cut = lt;
+    if (amp > head.lastIndexOf(';') && amp < cut) cut = amp;
+    const c = rest.charCodeAt(cut - 1);
+    if (c >= 0xd800 && c <= 0xdbff) cut--;
+    if (cut <= 0) cut = limit;
+    parts.push(rest.slice(0, cut).replace(/\s+$/, ''));
+    rest = rest.slice(cut).replace(/^\n/, '');
+  }
+  if (rest.trim() || !parts.length) parts.push(rest);
+  return parts;
 }

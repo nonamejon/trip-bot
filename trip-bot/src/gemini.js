@@ -28,11 +28,13 @@ export async function gemini(env, { prompt, media = [], schema = null, temperatu
   const body = JSON.stringify({ contents: [{ role: 'user', parts }], generationConfig, ...(tools ? { tools } : {}) });
   const r = await callGemini(env, body, timeoutMs);
   const j = await r.json();
-  const text = (j.candidates?.[0]?.content?.parts || []).map((p) => p.text || '').join('').trim();
-  if (!text) throw new Error('Gemini returned no text: ' + JSON.stringify(j).slice(0, 300));
+  // Thought parts (thinking models) are not the answer.
+  const text = (j.candidates?.[0]?.content?.parts || []).filter((p) => !p.thought).map((p) => p.text || '').join('').trim();
+  const why = j.candidates?.[0]?.finishReason || j.promptFeedback?.blockReason || '?';
+  if (!text) throw new Error(`Gemini returned no text (${why}): ` + JSON.stringify(j).slice(0, 300));
   if (!schema) return text;
   try { return JSON.parse(text); }
-  catch { throw new Error('Gemini returned invalid JSON: ' + text.slice(0, 300)); }
+  catch { throw new Error(`Gemini returned invalid JSON (${why}): ` + text.slice(0, 300)); }
 }
 
 // Gemini sometimes answers "busy" (429/5xx) at once, or is slow. A quick "busy" is retried once, after a short pause;
