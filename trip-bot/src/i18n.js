@@ -533,3 +533,7 @@ Object.assign(O.ru, {
   searchFailed: 'Извините, сейчас не удалось найти варианты. Попробуем ещё раз чуть позже.',
   notAllowed: 'Извините, это действие вам недоступно.',
 });
+
+// A country instead of a city
+O.uz.field.city = 'qaysi shaharga';
+O.ru.field.city = 'в какой город';

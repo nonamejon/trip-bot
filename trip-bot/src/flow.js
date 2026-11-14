@@ -23,9 +23,10 @@ import { secMenu, addEvent, addReminder, showAgenda, listReminders, doTranslate,
 
 // Only "where" and "roughly when" block a request; the rest is asked as optional and he can send without it.
 // Baggage is never asked: the agent states the allowance of each fare.
-const hardMissing = (f) => [!f.destination && 'destination', !f.date_from && !f.date_flex && 'date_from'].filter(Boolean);
+// A country ("Xitoy") is not enough to search flights: the city is asked, with buttons for the main ones.
+const hardMissing = (f) => [!f.destination && 'destination', f.destination && f.destination_kind === 'country' && 'city', !f.date_from && !f.date_flex && 'date_from'].filter(Boolean);
 const softMissing = (f) => [!f.travelers && 'travelers', f.date_from && !f.date_to && !f.one_way && !f.date_flex && 'date_to'].filter(Boolean);
-const FIELD_KEYS = ['origin', 'destination', 'date_from', 'date_to', 'one_way', 'date_flex', 'window_from', 'window_to', 'origin_iata', 'destination_iata', 'travelers', 'traveler_names', 'flight_pref', 'baggage', 'hotel', 'budget', 'notes'];
+const FIELD_KEYS = ['origin', 'destination', 'destination_kind', 'city_options', 'date_from', 'date_to', 'one_way', 'date_flex', 'window_from', 'window_to', 'origin_iata', 'destination_iata', 'travelers', 'traveler_names', 'flight_pref', 'baggage', 'hotel', 'budget', 'notes'];
 // "12-noyabr – 15-noyabr (3 kecha)", "15-noyabr (bir tomonga)", plus the flexibility if any
 const datesLine = (S, f, lang, Q = '?') => {
   if (f.date_flex && !f.date_from) return `${f.date_flex} (${S.flexible})`; // no invented exact date
@@ -132,9 +133,14 @@ function optionLinks(env, L, t, o) {
   const flight = safeUrl(o.flight_link);
   const avia = flight && /aviasales\./.test(flight) ? flight : aviasalesUrl(env, t.fields, o);
   return [
-    ['Aviasales', avia], [L.linkAirline, flight && flight !== avia ? flight : null],
-    [L.linkHotel, safeUrl(o.hotel_link)], ['Booking.com', o.hotel ? bookingComUrl(t.fields, o) : null],
+    ['Aviasales', avia], [L.linkAirline, flight && flight !== avia ? deepLink(flight) : null],
+    [L.linkHotel, deepLink(safeUrl(o.hotel_link))], ['Booking.com', o.hotel ? bookingComUrl(t.fields, o) : null],
   ].filter(([, u]) => u);
+}
+// A site's home page ("https://www.csair.com", ".../en/") opens nothing useful: only links to a specific page are shown.
+function deepLink(u) {
+  if (!u) return null;
+  try { const p = new URL(u); return p.search || !/^\/?([a-z]{2}([-_][a-z]{2})?\/?)?$/i.test(p.pathname) ? u : null; } catch { return null; }
 }
 const href = (u) => u.replace(/&/g, '&amp;').replace(/"/g, '&quot;');
 function linksLine(env, L, t, o) {
@@ -447,6 +453,12 @@ async function buildRequest(env, uid, chat, t, text, media, L, lang, heardText =
   t.fields.origin ||= L.origin;
   await logEvent(env, 'owner', 'request_input', t.id, { text, media: media.map((m) => m.mime), transcript: heardText || r.transcript || null, fields: t.fields });
 
+  if (t.fields.destination_kind !== 'country') delete t.fields.city_options;
+  return showRequest(env, chat, t, L, lang, !!r.wants_search);
+}
+
+// The request card. autoSearch: he asked for the flights ("roʻyxatini ber"), so search right away if it is complete.
+async function showRequest(env, chat, t, L, lang, autoSearch = false) {
   if (t.fields.one_way) delete t.fields.date_to;
   const hard = hardMissing(t.fields), soft = softMissing(t.fields);
   const hint = !t.fields.flight_pref && !t.fields.hotel ? L.optionalHint : '';
@@ -454,11 +466,13 @@ async function buildRequest(env, uid, chat, t, text, media, L, lang, heardText =
     // Where or when is missing: show the card and ask for it (and the optional items) in one message.
     if (t.status !== 'collecting') await setStatus(env, t, 'collecting', 'owner'); else await saveTrip(env, t);
     const ask = [`<b>${L.askMissing(hard.map((k) => L.field[k]).join(', '))}</b>`, soft.length ? L.askOptional(soft.map((k) => L.field[k]).join(', ')) : '', hint].filter(Boolean).join('\n');
-    return send(env, chat, `${draftText(L, lang, t)}\n\n${ask}`, kb([[[L.btnCancel, `cx:${t.id}`]]]));
+    const cities = hard.includes('city') ? (t.fields.city_options || []).slice(0, 4).map((c, i) => [[`📍 ${c.name}`, `dc:${t.id}:${i}`]]) : [];
+    return send(env, chat, `${draftText(L, lang, t)}\n\n${ask}`, kb([...cities, [[L.btnCancel, `cx:${t.id}`]]]));
   }
   // Enough to send. Optional gaps are asked, but the approve button is always there.
   t.draft_at = Date.now(); t.nudged = 0;
   await setStatus(env, t, 'draft', 'owner');
+  if (autoSearch) { await send(env, chat, draftText(L, lang, t)); return approve(env, t); }
   const ask = [soft.length ? L.askOptional(soft.map((k) => L.field[k]).join(', ')) : '', soft.length ? hint : ''].filter(Boolean).join('\n');
   return send(env, chat, draftText(L, lang, t) + (ask ? `\n\n${ask}` : ''), kb([[[L.btnApprove, `ap:${t.id}`]], [[L.btnEdit, `ed:${t.id}`], [L.btnCancel, `cx:${t.id}`]]]));
 }
@@ -595,7 +609,7 @@ export async function handleCallback(env, cq) {
   if (await handleSecCallback(env, { a, id: idStr, arg: argStr, uid, chat, L, lang, answer, dropKeyboard })) return;
 
   // My trips: a trip's card and what can be done from it
-  if (['tv', 'ov', 'td', 'aw', 'tc', 'tf', 'tx', 'bk', 'bl', 'rc', 'sr', 'tz'].includes(a)) {
+  if (['tv', 'ov', 'td', 'aw', 'tc', 'tf', 'tx', 'bk', 'bl', 'rc', 'sr', 'tz', 'dc'].includes(a)) {
     const t = await getTrip(env, +idStr);
     if (!t || t.owner_id !== uid) return answer(L.staleBtn);
     await answer();
@@ -621,6 +635,15 @@ export async function handleCallback(env, cq) {
         if (t.status !== 'chosen') return send(env, chat, L.staleBtn);
         t.chosen = null; await setStatus(env, t, 'offers', 'owner'); return offersMessage(env, t, L, lang);
       case 'sr': return ['sent', 'offers'].includes(t.status) ? otherOptions(env, t) : send(env, chat, L.staleBtn);
+      case 'dc': { // a city for a country-level request
+        const c = (t.fields.city_options || [])[+argStr];
+        if (!c || !['collecting', 'draft'].includes(t.status)) return send(env, chat, L.staleBtn);
+        await dropKeyboard();
+        Object.assign(t.fields, { destination: c.name, destination_kind: 'city', destination_iata: /^[A-Z]{3}$/.test(c.iata) ? c.iata : null });
+        delete t.fields.city_options; delete t.fields.destination_en; delete t.fields.area_en;
+        await logEvent(env, 'owner', 'city_chosen', t.id, c.name);
+        return showRequest(env, chat, t, modeL(env, L), lang);
+      }
       case 'tz': return ['booked', 'chosen'].includes(t.status) ? finishTrip(env, t, L, chat) : send(env, chat, L.staleBtn);
     }
   }
@@ -776,6 +799,13 @@ export async function handleAgentText(env, t, text, media) {
   if (media.length) t.agent_texts.push('[Options read from the agent’s attachment] ' + JSON.stringify(offers));
   t.offers = offers;
   for (const k of ['origin_en', 'destination_en', 'area_en']) if (r[k]) t.fields[k] = r[k]; // for search links
+  for (const k of ['origin_iata', 'destination_iata']) if (!t.fields[k] && /^[A-Z]{3}$/.test(r[k] || '')) t.fields[k] = r[k];
+  for (const o of offers) { // only the flight and hotel prices given: the total is flight + hotel × nights
+    if (o.total_price == null && o.flight_price != null) {
+      const n = nights(o.date_out || t.fields.date_from, o.date_back || t.fields.date_to);
+      o.total_price = Math.round(o.flight_price + (o.hotel_price_night != null && n ? o.hotel_price_night * n : 0));
+    }
+  }
   t.recommended = Number.isInteger(r.recommended) && offers[r.recommended] ? r.recommended : null;
   t.reason = r.reason || null;
 

@@ -56,6 +56,9 @@ const ROUTE = [
 
 // [message, draft so far, history, check(fields)]
 const PARSE = [
+  ['Xoʻp, ertaga Xitoyga uchib ketishim kerak, taqdimotga.', {}, '', (f) => f.destination_kind === 'country' && Array.isArray(f.city_options) && f.city_options.length >= 2 && f.city_options.every((c) => /^[A-Z]{3}$/.test(c.iata)) && !f.destination_iata],
+  ['Parvoz uchun reyslar roʻyxatini ber, 15-noyabrda Toshkentdan Pekinga uchadigan.', { destination: 'Pekin', destination_iata: 'BJS', date_from: '2026-11-15' }, '', (f) => f.wants_search === true && f.destination_kind !== 'country'],
+  ['Turkiyaga, Istanbulga, 20-noyabr', {}, '', (f) => f.destination_kind === 'city' && f.destination_iata === 'IST'],
   ['Istanbulga 12-dan 15-noyabrgacha, 3 kun, bir kishilik.', {}, '', (f) => md(f.date_from) === '11-12' && md(f.date_to) === '11-15' && f.travelers === 1 && f.destination_iata === 'IST'],
   ['Guanchjouga shu shu oyning oʻrtalariga boʻladi, lyuboy arzonroq kuni boʻlaveradi, bitta odamga.', {}, '', (f) => !!f.date_flex && !f.date_from && f.travelers === 1 && f.destination_iata === 'CAN' && !!f.window_from],
   ['Moskvaga bir tomonga, 20-noyabr, 2 kishi', {}, '', (f) => f.one_way === true && f.travelers === 2 && md(f.date_from) === '11-20' && !f.date_to],

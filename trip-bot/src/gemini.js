@@ -74,6 +74,9 @@ const REQUEST_SCHEMA = {
     travelers: { type: 'INTEGER', nullable: true }, traveler_names: S(), flight_pref: S(),
     one_way: { type: 'BOOLEAN', nullable: true }, date_flex: S(), window_from: S(), window_to: S(),
     origin_iata: S(), destination_iata: S(),
+    destination_kind: { type: 'STRING', enum: ['city', 'country'], nullable: true },
+    city_options: { type: 'ARRAY', nullable: true, items: { type: 'OBJECT', properties: { name: { type: 'STRING' }, iata: { type: 'STRING' } }, required: ['name', 'iata'] } },
+    wants_search: { type: 'BOOLEAN', nullable: true },
     baggage: S(), hotel: S(), budget: S(), notes: S(),
   },
 };
@@ -96,7 +99,10 @@ Return the complete, updated trip request as JSON:
 - date_from, date_to: only exact dates he gave; ALWAYS digits "YYYY-MM-DD", even though other values are in ${S.name}. "12-15 noyabr" / "с 12 по 15 ноября" means date_from = the 12th and date_to = the 15th. A length ("3 kunga", "на неделю") counts from date_from. Use the nearest future date.
 - date_flex: if his dates are approximate or he wants the cheapest day ("oyning oʻrtalarida", "arzonroq kuni", "в конце месяца", "±2 kun"), describe it briefly, including the return if it is flexible too (e.g. "noyabr oʻrtalari, borib-kelish eng arzon kunlarda"), and leave date_from/date_to null unless he gave exact dates. Never turn an approximate date into an exact one. Else null.
 - window_from, window_to: when date_flex is set, the earliest departure and latest return dates of that window, "YYYY-MM-DD" ("noyabr oʻrtalari" = about the 10th to the 20th); else null.
-- origin_iata, destination_iata: the 3-letter IATA city code of the origin and destination (TAS, IST, DXB, CAN, MOW...); null if no destination yet.
+- origin_iata, destination_iata: the 3-letter IATA city code of the origin and destination (TAS, IST, DXB, CAN, MOW...); null if no destination yet or it is a country.
+- destination_kind: "country" if he named only a country or a big region ("Xitoy", "Turkiya", "Yevropa", "Китай") and no city; "city" otherwise.
+- city_options: only when destination_kind is "country": up to 4 cities in it that people from Tashkent most often fly to, each { name (in ${S.name}), iata (3-letter IATA city code) }; else null.
+- wants_search: true if in this message he asks to search now or see the flights ("reyslar roʻyxatini ber", "qidir", "variantlarni koʻrsat", "shunday yubor", "найди билеты"); else null.
 - one_way: true if he wants a one-way ticket ("bir tomonga", "в одну сторону", "qaytish kerak emas"); then date_to is null. Otherwise null.
 - travelers: the number of people travelling, ONLY if he says it ("yolgʻiz", "bir kishilik", "1 kishi", "вдвоём", "3 kishi"). Numbers in dates, times, prices or lengths of stay are never the traveler count. null if he has not said.
 - baggage: ONLY what he says ("faqat qoʻl yuki", "1 chamadon", "23 kg"); null if he has not said. Never assume a default and never ask for it.
@@ -126,7 +132,7 @@ const OFFERS_SCHEMA = {
     },
     recommended: { type: 'INTEGER', nullable: true },
     reason: S(),
-    origin_en: S(), destination_en: S(), area_en: S(),
+    origin_en: S(), destination_en: S(), area_en: S(), origin_iata: S(), destination_iata: S(),
   },
   required: ['offers'],
 };
@@ -142,7 +148,7 @@ ${media.length ? 'The agent also attached the file(s) included here; read them.'
 
 Return JSON:
 offers: every option the agent gave, in order, each with label (${S.labels}), airline, outbound (short, like "07:40 → 10:55"), outbound_datetime ("YYYY-MM-DDTHH:MM", local departure time), return (short, with date and time, like ${S.ret}), stops (${S.stops}), baggage (the fare's allowance, short, like "23 kg" or "hand luggage only"), hotel (name and stars), distance (to where he needs to be), total_price (number, everything together), flight_price (the flights alone, if given), hotel_price_night (the hotel per night, if given), currency (ISO code, like "USD"), refund ("full", "penalty", "none" or "unknown"), refund_note, date_out and date_back ("YYYY-MM-DD" of the outbound and return flights; date_back null if one-way), flight_link and hotel_link (http(s) URLs given in the text for booking that flight and that hotel; null if none).
-origin_en, destination_en: the origin and destination cities in English; area_en: the area where he wants to stay, in English (e.g. "Levent, Istanbul"), or the destination city.
+origin_iata, destination_iata: 3-letter IATA city codes of the cities the flights go between; origin_en, destination_en: the origin and destination cities in English; area_en: the area where he wants to stay, in English (e.g. "Levent, Istanbul"), or the destination city.
 recommended: index (0-based) of the best fit for the request: his wishes on flight time and hotel location first, then flexibility, then price.
 reason: one short sentence saying why.
 Write all free-text values in ${S.name}; keep airline names, flight numbers and hotel names as they are.

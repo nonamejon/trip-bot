@@ -80,7 +80,10 @@ globalThis.fetch = async (url, init = {}) => {
       geminiCalls.push('parseRequest' + (hasMedia ? '+audio' : ''));
       lastParsePrompt = prompt;
       const nm = (prompt.match(/His new message: "{3}([\s\S]*?)"{3}/) || [])[1] || '';
-      out = /arzon/.test(nm)
+      out = /Xitoy/.test(nm)
+        ? { destination: 'Xitoy', destination_kind: 'country', city_options: [{ name: 'Pekin', iata: 'BJS' }, { name: 'Shanxay', iata: 'SHA' }, { name: 'Guanchjou', iata: 'CAN' }], date_from: localISO(1), travelers: 1 }
+        : /roʻyxatini ber/.test(nm) ? { wants_search: true }
+        : /arzon/.test(nm)
         ? { destination: 'Guanchjou', origin: 'Toshkent', date_flex: 'noyabr oʻrtalari, borib-kelish eng arzon kunlarda', travelers: null }
         : /Dubai/.test(nm)
         ? { destination: 'Dubai', origin: 'Tashkent', travelers: /45/.test(nm) ? 45 : null }
@@ -100,8 +103,9 @@ globalThis.fetch = async (url, init = {}) => {
         { label: 'Option 3', airline: 'Pegasus', outbound: '06:10 → 13:40', outbound_datetime: '2026-11-12T06:10', return: '15 Nov 18:00', stops: '1 stop via Ankara', hotel: 'Levent Residence 4*', distance: '10 min walk', total_price: 890, currency: 'USD', refund: 'none', refund_note: null },
       ];
       if (prompt.includes('SEARCHRESULT')) {
-        o[0] = { ...o[0], flight_price: 412, hotel_price_night: 346, flight_link: 'https://www.uzairways.com/en', hotel_link: 'https://www.grandlevent.example/book', date_out: '2026-12-12', date_back: '2026-12-15', baggage: '23 kg' };
-        o[1] = { ...o[1], date_out: '2026-12-12', date_back: '2026-12-15' };
+        o[0] = { ...o[0], flight_price: 412, hotel_price_night: 346, flight_link: 'https://www.uzairways.com/en/flights/HY271', hotel_link: 'https://www.grandlevent.example/book', date_out: '2026-12-12', date_back: '2026-12-15', baggage: '23 kg' };
+        o[1] = { ...o[1], date_out: '2026-12-12', date_back: '2026-12-15', flight_link: 'https://www.turkishairlines.com/en/' };
+        o[2] = { ...o[2], total_price: null, flight_price: 300, hotel_price_night: 50, date_out: '2026-12-12', date_back: '2026-12-15' };
       }
       out = { offers: o, recommended: 0, reason: 'Morning direct flight, hotel next to the meeting, and fully refundable.', origin_en: 'Tashkent', destination_en: 'Istanbul', area_en: 'Levent, Istanbul' };
     } else if (prompt.startsWith('Transcribe')) {
@@ -474,6 +478,8 @@ assert(geminiCalls.includes('search+google') && status().status === 'offers', 's
 assert(lastText().includes('aviasales.uz/search/TAS1212IST15121?marker=12345') && lastText().includes('uzairways.com') && lastText().includes('booking.com') && !lastText().includes('google.com'), 'options link to Aviasales (with the affiliate marker), the airline, the hotel and Booking.com');
 assert(lastSearchPrompt.includes('Real fares found on Aviasales') && lastSearchPrompt.includes('"price":412') && lastFaresQuery.get('origin') === 'TAS' && lastFaresQuery.get('destination') === 'IST' && lastFaresQuery.get('return_at') === '2026-11-15', 'with a Travelpayouts token the search is built from real Aviasales fares');
 assert(lastText().includes('Aviasales’dan'), 'the card says the prices come from Aviasales');
+assert(!lastText().includes('turkishairlines.com'), 'a bare home page (airline site with nothing filled in) is not shown');
+assert(lastText().includes('450 USD (✈️ 300 + 🏨 50/kecha)') && !/narxi nomaʼlum \(/.test(lastText()), 'only flight and hotel prices given: the total is computed (no "price unknown" next to prices)');
 assert(lastText().includes('1 450 USD (✈️ 412 + 🏨 346/kecha)'), 'the total is split into the flight (as on Aviasales) and the hotel per night');
 delete env.TRAVELPAYOUTS_TOKEN; delete env.TRAVELPAYOUTS_MARKER;
 assert(!sent.slice(-6).some((x) => (x.p.text || '').includes('Bot → agent')), 'nothing is mirrored to an agent');
@@ -545,6 +551,17 @@ assert(!sqlite.prepare('SELECT 1 FROM members WHERE telegram_id = 999').get(), '
 n0 = sent.length;
 await update({ message: { message_id: ++msgId, from: { id: 999, is_bot: false }, chat: { id: 999, type: 'private' }, text: 'salom' } });
 assert(sent.slice(n0).some((x) => x.p.chat_id === 999 && x.p.text.includes('shaxsiy yordamchi')), 'after removal they are a stranger again');
+
+// a country instead of a city (real case: "ertaga Xitoyga"): city buttons; "show the flights" starts the search
+await say('ertaga Xitoyga uchishim kerak, taqdimotga'); show('country instead of a city');
+const cnTrip = status().id;
+assert(status().status === 'collecting' && lastText().includes('qaysi shaharga') && lastKb().includes(`dc:${cnTrip}:0`) && lastKb().includes('📍 Pekin'), 'a country: the bot asks which city, with buttons for the main ones');
+await tap(`dc:${cnTrip}:0`); show('city chosen');
+const cnFields = JSON.parse(sqlite.prepare('SELECT fields FROM trips WHERE id = ?').get(cnTrip).fields);
+assert(status().status === 'draft' && cnFields.destination === 'Pekin' && cnFields.destination_iata === 'BJS' && lastKb().includes(`ap:${cnTrip}`), 'one tap sets the city and its airport code');
+await say('reyslar roʻyxatini ber'); show('"show me the flights"');
+assert(status().status === 'sent', '"reyslar roʻyxatini ber" on a complete request starts the search (no repeated card)');
+await say('/cancel'); await tap(`cy:${cnTrip}`);
 
 // a booked trip after its flight (real case: flight 9 Nov, stay 10-13 Nov): no daily "trip" line in the brief or
 // agenda; "I already flew" closes it instead of offering to cancel
