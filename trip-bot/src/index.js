@@ -65,8 +65,8 @@ export default {
     return new Response('Trip bot is running.');
   },
 
-  // The runtime waits for the promise this returns (up to 15 minutes). Work handed only to ctx.waitUntil() was cut
-  // off after about two minutes with no error (a lost search on 2026-11-16), so the cron awaits everything itself.
+  // The runtime waits for the promise this returns (up to 15 minutes), so the cron awaits everything itself rather
+  // than leaving long jobs (searches take 1-2 minutes) to ctx.waitUntil().
   async scheduled(event, env, ctx) {
     await (async () => {
       await loadMembers(env);
