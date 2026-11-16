@@ -9,7 +9,7 @@
 
 import {
   MIN, HOUR, DAY, one, all, run, claim, StaleTrip, sendOrRelease, logEvent, getTrip, activeTrip, createTrip, saveTrip, setStatus, WITH_AGENT, OPEN, code,
-  fmtLocal, hmLocal, dshort, localToUtc, localISODate, addDaysISO, nights, esc, money, refundWord, b64, encrypt, decrypt,
+  fmtLocal, hmLocal, dshort, localToUtc, zonedToUtc, localISODate, addDaysISO, nights, esc, money, refundWord, b64, encrypt, decrypt,
   getLang, setLang, strings, getMode, setMode, clearMode, logChat, recentChat, adminIds, isUser, loadMembers,
 } from './util.js';
 import { tg, tgUpload, send, sendLong, typing, whileTyping, kb, replyKb, download } from './telegram.js';
@@ -172,7 +172,7 @@ async function tripText(env, L, lang, t) {
     ...(o.return || f.date_to ? [`${L.back}: ${o.return ? esc(o.return) : dshort(f.date_to, lang)}`] : []),
     `${L.hotel}: ${esc([o.hotel, o.distance].filter(Boolean).join(' · ') || L.seeVoucher)}`,
     `${L.total}: ${esc(money(o, lang))} · ${esc(refundWord(o.refund, lang))}`, '',
-    rem.length ? `${L.reminders}:\n` + rem.map((r) => `· ${r.type === 'checkin' ? L.remCheckin : L.remLeave}: ${fmtLocal(env, r.due_at, lang)}`).join('\n')
+    rem.length ? `${L.reminders}:\n` + rem.map((r) => `· ${{ checkin: L.remCheckin, leave: L.remLeave, checkin_back: L.remCheckinBack, leave_back: L.remLeaveBack }[r.type] || r.type}: ${fmtLocal(env, r.due_at, lang)}`).join('\n')
       : L.noFlightTime,
   ].join('\n');
 }
@@ -405,7 +405,7 @@ async function setFlightTime(env, uid, chat, L, lang, tripId, said) {
     return finishBooking(env, t, 'ticket');
   }
   t.fields.date_from = w.date;
-  t.flight_at = localToUtc(env, o.outbound_datetime);
+  t.flight_at = zonedToUtc(env, o.outbound_datetime, o.out_tz);
   t.done_at = doneAt(env, t);
   await saveTrip(env, t);
   await run(env, 'DELETE FROM reminders WHERE trip_id = ? AND sent_at IS NULL', t.id);
@@ -419,11 +419,16 @@ function doneAt(env, t) {
   return back != null ? back + DAY : (t.flight_at ? t.flight_at + 2 * DAY : null);
 }
 
+// The return flight's departure in UTC: only when its time zone is known (a guess could put the reminder hours off).
+const backAt = (env, o) => (o && isDateTime(o.return_datetime) && o.return_tz ? zonedToUtc(env, o.return_datetime, o.return_tz) : null);
+
 async function scheduleFlightReminders(env, t) {
-  if (!t.flight_at) return;
-  const now = Date.now();
-  for (const [type, at] of [['checkin', t.flight_at - DAY], ['leave', t.flight_at - 3 * 60 * MIN]]) {
-    if (at > now) await run(env, 'INSERT INTO reminders (trip_id, type, due_at) VALUES (?, ?, ?)', t.id, type, at);
+  const now = Date.now(), back = t.fields.one_way ? null : backAt(env, t.offers[t.chosen]);
+  for (const [type, at] of [
+    ['checkin', t.flight_at && t.flight_at - DAY], ['leave', t.flight_at && t.flight_at - 3 * HOUR],
+    ['checkin_back', back && back - DAY], ['leave_back', back && back - 3 * HOUR],
+  ]) {
+    if (at && at > now) await run(env, 'INSERT INTO reminders (trip_id, type, due_at) VALUES (?, ?, ?)', t.id, type, at);
   }
 }
 
@@ -946,7 +951,7 @@ async function finishBooking(env, t, source = 'agent') {
   if (isDate(outDay)) t.fields.date_from = outDay;
   if (isDate(o.date_back) && !t.fields.one_way && o.date_back >= (t.fields.date_from || '')) t.fields.date_to = o.date_back;
   if (isDate(t.fields.date_from)) { delete t.fields.date_flex; delete t.fields.window_from; delete t.fields.window_to; }
-  t.flight_at = localToUtc(env, o.outbound_datetime) ?? null;
+  t.flight_at = zonedToUtc(env, o.outbound_datetime, o.out_tz) ?? null;
   t.done_at = doneAt(env, t);
   await setStatus(env, t, 'booked', 'agent');
   await run(env, 'DELETE FROM reminders WHERE trip_id = ? AND sent_at IS NULL', t.id);
@@ -1079,15 +1084,18 @@ async function applyTicket(env, t, tk, L, lang, chat) {
     t.chosen = t.offers.length - 1;
   }
   const o = t.offers[t.chosen];
-  o.outbound_datetime = first.departure_local.slice(0, 16);
+  o.outbound_datetime = first.departure_local.slice(0, 16); o.out_tz = first.departure_tz || null;
   o.outbound = `${first.departure_local.slice(11, 16)}${isDateTime(first.arrival_local) ? ' → ' + first.arrival_local.slice(11, 16) : ''}`;
   o.airline = [first.airline, first.flight_number].filter(Boolean).join(' ') || o.airline;
   o.date_out = first.departure_local.slice(0, 10);
-  if (back) { o.date_back = back.departure_local.slice(0, 10); o.return = `${dshort(o.date_back, lang)} ${back.departure_local.slice(11, 16)}`; t.fields.date_to = o.date_back; }
+  if (back) {
+    o.date_back = back.departure_local.slice(0, 10); o.return = `${dshort(o.date_back, lang)} ${back.departure_local.slice(11, 16)}`; t.fields.date_to = o.date_back;
+    o.return_datetime = back.departure_local.slice(0, 16); o.return_tz = back.departure_tz || null;
+  }
   t.fields.date_from = o.date_out;
   const line = L.ticketRead(esc(first.flight_number || first.airline || ''), fmtLocal(env, localToUtc(env, o.outbound_datetime), lang));
   if (t.status === 'booked') { // already booked: correct the time and the reminders
-    t.flight_at = localToUtc(env, o.outbound_datetime);
+    t.flight_at = zonedToUtc(env, o.outbound_datetime, o.out_tz);
     t.done_at = doneAt(env, t);
     await saveTrip(env, t);
     await run(env, 'DELETE FROM reminders WHERE trip_id = ? AND sent_at IS NULL', t.id);
@@ -1144,9 +1152,14 @@ export async function runChecks(env) {
     const { L } = await strings(env, t.owner_id);
     const doc = await one(env, 'SELECT id FROM documents WHERE trip_id = ? ORDER BY id LIMIT 1', t.id);
     try {
-      await sendOrRelease(env, () => (rem.type === 'checkin'
-      ? send(env, t.owner_id, L.checkin(route(L, t), esc([o.airline, o.outbound].filter(Boolean).join(', ') || hmLocal(env, t.flight_at))), doc ? kb([[[L.btnTicket, `doc:${doc.id}`]]]) : {})
-      : send(env, t.owner_id, L.leave(route(L, t), hmLocal(env, t.flight_at)))),
+      // Times as printed for the departure airport (local there); the return flight goes the other way.
+    const isBack = rem.type.endsWith('_back');
+    const way = isBack ? `${esc(t.fields.destination || '?')} → ${esc(t.fields.origin || L.origin)}` : route(L, t);
+    const localTime = isBack ? (o.return_datetime || '').slice(11, 16) : (isDateTime(o.outbound_datetime) ? o.outbound_datetime.slice(11, 16) : hmLocal(env, t.flight_at));
+    const info = isBack ? [o.airline, o.return].filter(Boolean).join(', ') : [o.airline, o.outbound].filter(Boolean).join(', ');
+    await sendOrRelease(env, () => (rem.type.startsWith('checkin')
+      ? send(env, t.owner_id, L.checkin(way, esc(info || localTime)), doc ? kb([[[L.btnTicket, `doc:${doc.id}`]]]) : {})
+      : send(env, t.owner_id, L.leave(way, localTime))),
       () => run(env, 'UPDATE reminders SET sent_at = NULL WHERE id = ?', rem.id));
     } catch (e) { await reportError(env, e, 'flight reminder'); continue; }
     await logEvent(env, 'cron', 'reminder_' + rem.type, t.id);

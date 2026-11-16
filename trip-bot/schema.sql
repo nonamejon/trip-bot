@@ -55,7 +55,8 @@ CREATE TABLE IF NOT EXISTS prefs (
   mode        TEXT,                               -- what the next message is for: translate | letter | revise | agent | flight_time | clarify
   mode_arg    TEXT,
   mode_at     INTEGER,                            -- modes expire after a while
-  brief_date  TEXT                                -- last local date the morning brief was sent
+  brief_date  TEXT,                               -- last local date the morning brief was sent
+  cal_ver     INTEGER                             -- calendar link version; "new link" raises it
 );
 
 -- The conversation with the owner (both directions), kept 30 days: context for Gemini and for debugging

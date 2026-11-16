@@ -146,6 +146,24 @@ export function localToUtc(env, iso) {
   if (/^\d{2}:\d{2}$/.test(t)) { H = +t.slice(0, 2); M = +t.slice(3, 5); }
   return Date.UTC(y, m - 1, d, H, M) - tz(env);
 }
+// A local wall-clock time at a place ("2026-11-20T19:30" in "Europe/Istanbul") to UTC ms. Without a valid time zone
+// it is read as the bot's own time (Tashkent). Handles daylight saving through Intl.
+export function zonedToUtc(env, iso, zone) {
+  const guess = localToUtc({ TZ_OFFSET_MIN: 0 }, iso);
+  if (guess == null) return null;
+  if (!zone) return localToUtc(env, iso);
+  try {
+    const offsetAt = (ms) => {
+      const p = Object.fromEntries(new Intl.DateTimeFormat('en-US', { timeZone: zone, hourCycle: 'h23', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })
+        .formatToParts(new Date(ms)).map((x) => [x.type, x.value]));
+      return Date.UTC(+p.year, +p.month - 1, +p.day, +p.hour, +p.minute) - Math.floor(ms / 60e3) * 60e3;
+    };
+    let utc = guess - offsetAt(guess);
+    utc = guess - offsetAt(utc);
+    return utc;
+  } catch { return localToUtc(env, iso); }
+}
+
 export function nights(a, b) {
   if (!a || !b) return null;
   const x = Date.parse(a.slice(0, 10)), y = Date.parse(b.slice(0, 10));

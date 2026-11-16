@@ -111,7 +111,7 @@ Return the complete, updated trip request as JSON:
 - traveler_names, flight_pref (time of day, direct or not, class), hotel (his wishes, short), budget, notes: only what he says.
 - transcript: if there is a voice note, its transcript in the original language; else null.
 Keep earlier values unless he changes or corrects them; a correction always wins. If he complains that a value is wrong, fix that value. Never invent anything. Text values in ${S.name}, using ${S.places}.`;
-  return gemini(env, { prompt, media, schema: REQUEST_SCHEMA, timeoutMs: 30000 });
+  return gemini(env, { prompt, media, schema: REQUEST_SCHEMA, thinking: 'low', timeoutMs: 30000 });
 }
 
 // ---------- 2. Agent message(s) -> structured options ----------
@@ -124,7 +124,7 @@ const OFFERS_SCHEMA = {
         type: 'OBJECT',
         properties: {
           label: { type: 'STRING' }, airline: S(), outbound: S(), outbound_datetime: S(), return: S(), stops: S(), baggage: S(),
-          date_out: S(), date_back: S(), flight_link: S(), hotel_link: S(),
+          date_out: S(), date_back: S(), flight_link: S(), hotel_link: S(), return_datetime: S(), out_tz: S(), return_tz: S(),
           flight_price: { type: 'NUMBER', nullable: true }, hotel_price_night: { type: 'NUMBER', nullable: true },
           hotel: S(), distance: S(), total_price: { type: 'NUMBER', nullable: true }, currency: S(),
           refund: { type: 'STRING', enum: ['full', 'penalty', 'none', 'unknown'] }, refund_note: S(),
@@ -149,7 +149,7 @@ Everything the agent has written for this request so far (later messages may add
 ${media.length ? 'The agent also attached the file(s) included here; read them.' : ''}
 
 Return JSON:
-offers: every option the agent gave, in order, each with label (${S.labels}), airline, outbound (short, like "07:40 → 10:55"), outbound_datetime ("YYYY-MM-DDTHH:MM", local departure time), return (short, with date and time, like ${S.ret}), stops (${S.stops}), baggage (the fare's allowance, short, like "23 kg" or "hand luggage only"), hotel (name and stars), distance (to where he needs to be), total_price (number, everything together), flight_price (the flights alone, if given), hotel_price_night (the hotel per night, if given), currency (ISO code, like "USD"), refund ("full", "penalty", "none" or "unknown"), refund_note, date_out and date_back ("YYYY-MM-DD" of the outbound and return flights; date_back null if one-way), flight_link and hotel_link (http(s) URLs given in the text for booking that flight and that hotel; null if none).
+offers: every option the agent gave, in order, each with label (${S.labels}), airline, outbound (short, like "07:40 → 10:55"), outbound_datetime ("YYYY-MM-DDTHH:MM", local departure time), return_datetime (the same for the return flight's departure; null if one-way or not stated), out_tz and return_tz (IANA time zone of the departure airport of the outbound and of the return flight, like "Asia/Tashkent", "Europe/Istanbul"; null if unknown), return (short, with date and time, like ${S.ret}), stops (${S.stops}), baggage (the fare's allowance, short, like "23 kg" or "hand luggage only"), hotel (name and stars), distance (to where he needs to be), total_price (number, everything together), flight_price (the flights alone, if given), hotel_price_night (the hotel per night, if given), currency (ISO code, like "USD"), refund ("full", "penalty", "none" or "unknown"), refund_note, date_out and date_back ("YYYY-MM-DD" of the outbound and return flights; date_back null if one-way), flight_link and hotel_link (http(s) URLs given in the text for booking that flight and that hotel; null if none).
 origin_iata, destination_iata: 3-letter IATA city codes of the cities the flights go between; origin_en, destination_en: the origin and destination cities in English; area_en: the area where he wants to stay, in English (e.g. "Levent, Istanbul"), or the destination city.
 recommended: index (0-based) of the best fit for the request: his wishes on flight time and hotel location first, then flexibility, then price.
 reason: one short sentence saying why.
@@ -298,7 +298,7 @@ const TICKET_SCHEMA = {
       type: 'ARRAY',
       items: {
         type: 'OBJECT',
-        properties: { flight_number: S(), airline: S(), from_city: S(), from_iata: S(), to_city: S(), to_iata: S(), departure_local: S(), arrival_local: S() },
+        properties: { flight_number: S(), airline: S(), from_city: S(), from_iata: S(), to_city: S(), to_iata: S(), departure_local: S(), arrival_local: S(), departure_tz: S() },
       },
     },
     hotel: S(), check_in: S(), check_out: S(),
@@ -307,7 +307,7 @@ const TICKET_SCHEMA = {
 };
 export function parseTicket(env, media, lang = 'uz') {
   const prompt = `Read the attached document. Is it an air ticket, e-ticket, itinerary receipt, booking confirmation, boarding pass or hotel voucher?
-Return JSON: is_ticket; booking_ref; passenger; flights (every flight segment in order: flight_number like "HY 271", airline, from_city and to_city in ${lang === 'ru' ? 'Russian' : 'Uzbek (Latin script)'}, from_iata, to_iata, departure_local and arrival_local as "YYYY-MM-DDTHH:MM" in the local time printed on the document); hotel, check_in, check_out ("YYYY-MM-DD") for a hotel voucher.
+Return JSON: is_ticket; booking_ref; passenger; flights (every flight segment in order: flight_number like "HY 271", airline, from_city and to_city in ${lang === 'ru' ? 'Russian' : 'Uzbek (Latin script)'}, from_iata, to_iata, departure_local and arrival_local as "YYYY-MM-DDTHH:MM" in the local time printed on the document, departure_tz: the IANA time zone of the departure airport, like "Asia/Tashkent" or "Europe/Istanbul"); hotel, check_in, check_out ("YYYY-MM-DD") for a hotel voucher.
 Copy what is printed; never guess a time. Use null for anything not on the document.`;
   return gemini(env, { prompt, media, schema: TICKET_SCHEMA, timeoutMs: 40000 });
 }

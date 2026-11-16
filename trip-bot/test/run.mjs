@@ -34,7 +34,7 @@ const env = {
 
 // ---------- fake Telegram + Gemini ----------
 const faresQueries = [];
-let dupOffers = false;
+let dupOffers = false, ticketTz = false;
 let lastGeminiMime = null, lastParsePrompt = '', lastSearchPrompt = '', failSearch = 0, lastFaresQuery = null;
 let ticketDepart = '2026-11-12T09:15', ticketBack = '2026-11-15T21:05';
 let msgId = 100, offersRound = 0, failNextGemini = false;
@@ -57,7 +57,7 @@ globalThis.fetch = async (url, init = {}) => {
       geminiCalls.push('parseTicket');
       out = { is_ticket: true, booking_ref: 'ABC123', flights: [
         { flight_number: 'TK 371', airline: 'Turkish Airlines', from_city: 'Toshkent', from_iata: 'TAS', to_city: 'Istanbul', to_iata: 'IST', departure_local: ticketDepart, arrival_local: ticketDepart.slice(0, 11) + '12:30' },
-        { flight_number: 'TK 370', airline: 'Turkish Airlines', from_city: 'Istanbul', from_iata: 'IST', to_city: 'Toshkent', to_iata: 'TAS', departure_local: ticketBack, arrival_local: null },
+        { flight_number: 'TK 370', airline: 'Turkish Airlines', from_city: 'Istanbul', from_iata: 'IST', to_city: 'Toshkent', to_iata: 'TAS', departure_local: ticketBack, arrival_local: null, departure_tz: ticketTz ? 'Europe/Istanbul' : null },
       ] };
     } else if (prompt.startsWith('You are a travel agent in Tashkent searching')) {
       geminiCalls.push('search' + (body.tools ? '+google' : ''));
@@ -448,6 +448,9 @@ const ics = await feed.text();
 assert(feed.status === 200 && /text\/calendar/.test(feed.headers.get('content-type')) && ics.includes('Bank bilan') && ics.includes('BEGIN:VALARM') && ics.includes(`T-000${tripId}-flight`), 'calendar feed has events and trips');
 assert((await worker.fetch(new Request('https://bot.example/cal/' + '0'.repeat(32) + '.ics'), env, ctx)).status === 404, 'wrong calendar link is refused');
 assert((await worker.fetch(new Request(feedUrl.replace('/cal/111/', '/cal/222/')), env, ctx)).status === 404, "one user's calendar token does not open another's");
+await tap('cr');
+const newFeed = lastText().match(/https:\/\/bot\.example\/cal\/111\/[0-9a-f]{32}\.ics/)?.[0];
+assert(newFeed && newFeed !== feedUrl && (await worker.fetch(new Request(feedUrl), env, ctx)).status === 404 && (await worker.fetch(new Request(newFeed), env, ctx)).status === 200, 'a new calendar link: the old one stops working, the new one works');
 
 // repeat rules
 const tzE = { TZ_OFFSET_MIN: '300' };
@@ -698,6 +701,21 @@ assert(nearFares.length === 1 && nearFares[0].depart === '2026-11-12T07:40', 'ex
   await say('Istanbul again please, same as before, 23 kg'); const du = status().id;
   dupOffers = true; await tap(`ap:${du}`); await cron(); dupOffers = false; show('duplicate options');
   assert(status().status === 'offers' && JSON.parse(sqlite.prepare('SELECT offers FROM trips WHERE id = ?').get(du).offers).length === 1 && lastText().includes('Bu kuni faqat bitta reys bor') && lastText().startsWith('<b>1 ta variant'), 'identical options are shown once, with the note');
+  env.AGENT_MODE = 'mock';
+}
+// a ticket with the return flight's time zone: reminders for the return too, at the right time
+{
+  env.AGENT_MODE = 'search';
+  sqlite.prepare(`UPDATE trips SET status = 'done' WHERE status IN ('collecting', 'draft', 'sent', 'offers', 'chosen', 'booked')`).run();
+  ticketTz = true; ticketDepart = '2027-02-10T08:00'; ticketBack = '2027-02-14T19:30';
+  await update({ message: { message_id: ++msgId, from: owner, chat: { id: 111, type: 'private' }, caption: 'chiptam', document: { file_id: 'TICKETTZ', file_name: 'tz.pdf', mime_type: 'application/pdf', file_size: 30000 } } });
+  ticketTz = false;
+  const tzTrip = status().id;
+  const rems = sqlite.prepare('SELECT type, due_at FROM reminders WHERE trip_id = ? ORDER BY due_at').all(tzTrip);
+  const leaveBack = rems.find((r) => r.type === 'leave_back');
+  assert(rems.length === 4 && leaveBack && leaveBack.due_at === Date.UTC(2027, 1, 14, 13, 30), 'return flight reminders, timed in the departure city (Istanbul 19:30 = 16:30 UTC, 3 h before)');
+  NOW = leaveBack.due_at + 30e3; n0 = sent.length; await cron();
+  assert(sent.slice(n0).some((x) => /Istanbul → Toshkent/.test(x.p.text || '') && /19:30/.test(x.p.text)), 'the return reminder shows the way home and the local departure time');
   env.AGENT_MODE = 'mock';
 }
 // cron runs that overlap send a reminder once

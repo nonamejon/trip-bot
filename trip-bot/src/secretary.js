@@ -208,8 +208,10 @@ const LANG_FULL = { uz: 'Uzbek (Latin script)', ru: 'Russian', en: 'English' };
 // ======================= phone calendar (subscription link) =======================
 
 const hex = (buf) => [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, '0')).join('');
+// prefs.cal_ver: raised by "new link", which stops the old link working (if it was shared by mistake).
 export async function calToken(env, uid) {
-  return hex(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(`${env.WEBHOOK_SECRET}:cal:${uid}`))).slice(0, 32);
+  const v = (await one(env, 'SELECT cal_ver FROM prefs WHERE telegram_id = ?', uid))?.cal_ver || 0;
+  return hex(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(`${env.WEBHOOK_SECRET}:cal:${uid}${v ? ':' + v : ''}`))).slice(0, 32);
 }
 export async function calUrl(env, uid) { return `${String(env.PUBLIC_URL || '').replace(/\/$/, '')}/cal/${uid}/${await calToken(env, uid)}.ics`; }
 
@@ -248,7 +250,13 @@ export async function handleSecCallback(env, { a, id, arg, uid, chat, L, lang, a
       await send(env, chat, L.translateMode(target));
       return true;
     }
-    case 'cl': await answer(); await send(env, chat, L.calLink(await calUrl(env, uid))); return true;
+    case 'cl': await answer(); await send(env, chat, L.calLink(await calUrl(env, uid)), kb([[[L.btnCalNew, 'cr']]])); return true;
+    case 'cr': // a new calendar link; the old one stops working
+      await answer(); await dropKeyboard();
+      await run(env, 'UPDATE prefs SET cal_ver = COALESCE(cal_ver, 0) + 1 WHERE telegram_id = ?', uid);
+      await logEvent(env, 'owner', 'cal_link_renewed');
+      await send(env, chat, `${L.calRenewed}\n\n${L.calLink(await calUrl(env, uid))}`);
+      return true;
     case 'xd': {
       const e = await one(env, 'SELECT * FROM cal_events WHERE id = ? AND owner_id = ?', +id, uid);
       if (!e) { await answer(L.staleBtn); return true; }

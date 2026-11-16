@@ -65,14 +65,16 @@ export default {
     return new Response('Trip bot is running.');
   },
 
+  // The runtime waits for the promise this returns (up to 15 minutes). Work handed only to ctx.waitUntil() was cut
+  // off after about two minutes with no error (a lost search on 2026-11-16), so the cron awaits everything itself.
   async scheduled(event, env, ctx) {
-    ctx.waitUntil((async () => {
+    await (async () => {
       await loadMembers(env);
       // Quick, time-critical checks first; the searches (30-90 s each) last, so they never delay a reminder.
       try { await secretaryChecks(env); } catch (e) { await reportError(env, e, 'cron secretary'); }
       try { await runChecks(env); } catch (e) { await reportError(env, e, 'cron checks'); }
       try { await runJobs(env); } catch (e) { await reportError(env, e, 'cron jobs'); }
-    })());
+    })();
   },
 };
 
