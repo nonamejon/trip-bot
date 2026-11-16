@@ -30,6 +30,9 @@ const ROUTE = [
   ['arzonroq variant topib ber', trip('offers'), (r) => ['trip_note', 'trip'].includes(r.intent)],
   ['xitoyga 20 kuni uchishim kerak', trip('offers', 'Urumchi'), (r) => r.intent === 'trip'], // real case: became a wish on the Urumchi search
   ['toʻgʻri reys boʻlsin', trip('offers', 'Urumchi'), (r) => r.intent === 'trip_note'],
+  ['nihao', trip('collecting', 'Xitoy'), (r) => r.intent !== 'trip'], // a greeting is not an answer to "which city"
+  ['asdfgh', trip('collecting', 'Xitoy'), (r) => r.intent !== 'trip'],
+  ['Chengdu', trip('collecting', 'Xitoy'), (r) => r.intent === 'trip'], // any city, not only the buttons
   ['ertaga soat 15:00 da Hilton mehmonxonasida uchrashuv', null, (r) => r.intent === 'event' && r.ev_time === '15:00'],
   ['встреча с инвесторами в пятницу в 10 утра', null, (r) => r.intent === 'event' && r.ev_time === '10:00'],
   ['juma kuni Bobur bilan uchrashuv bor', null, (r) => r.intent === 'event' && (!!r.question || !r.ev_time)],

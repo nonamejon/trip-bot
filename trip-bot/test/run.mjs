@@ -180,6 +180,8 @@ function fakeRoute(prompt, hasMedia) {
   if (/rejalarim/.test(m)) return { intent: 'agenda', ag_from: localISO(1), ag_to: localISO(1) };
   if (/rahmat/.test(m)) return { intent: 'chat', reply: 'Arzimaydi!' };
   if (/pitsa/.test(m)) return { intent: 'off_topic', reply: 'Klassik pitsa uchun xamir...' };
+  if (/asdfgh/.test(m)) return { intent: 'off_topic' };
+  if (/nihao/.test(m)) return { intent: 'chat', reply: 'Ni hao! Qaysi shaharga uchmoqchisiz?' };
   return { intent: 'trip' };
 }
 
@@ -569,6 +571,11 @@ assert(sent.slice(n0).some((x) => x.p.chat_id === 999 && x.p.text.includes('shax
 await say('ertaga Xitoyga uchishim kerak, taqdimotga'); show('country instead of a city');
 const cnTrip = status().id;
 assert(status().status === 'collecting' && lastText().includes('qaysi shaharga') && lastKb().includes(`dc:${cnTrip}:0`) && lastKb().includes('📍 Pekin'), 'a country: the bot asks which city, with buttons for the main ones');
+assert(lastText().includes(O.uz.cityHint) && JSON.parse(lastKb()).inline_keyboard[0].length === 2, 'it says any city can be typed; cities two per row');
+await say('asdfgh'); show('random answer to "which city"');
+assert(lastText().startsWith(O.uz.notUnderstood) && lastKb().includes(`dc:${cnTrip}:0`) && status().status === 'collecting', 'a random answer: "did not understand" and the city question again, not the off-topic text');
+await say('nihao');
+assert(lastText().startsWith('Ni hao!') && lastKb().includes(`dc:${cnTrip}:1`) && JSON.parse(sqlite.prepare('SELECT fields FROM trips WHERE id = ?').get(cnTrip).fields).destination === 'Xitoy', 'a greeting is not taken as a city: the question stays, with the buttons');
 await tap(`dc:${cnTrip}:0`); show('city chosen');
 const cnFields = JSON.parse(sqlite.prepare('SELECT fields FROM trips WHERE id = ?').get(cnTrip).fields);
 assert(status().status === 'draft' && cnFields.destination === 'Pekin' && cnFields.destination_iata === 'BJS' && lastKb().includes(`ap:${cnTrip}`), 'one tap sets the city and its airport code');

@@ -546,4 +546,8 @@ Object.assign(O.ru, {
 
 // A country instead of a city
 O.uz.field.city = 'qaysi shaharga';
+O.uz.cityHint = 'Quyidagilardan birini tanlang yoki istalgan shahar nomini yozing.';
+O.ru.cityHint = 'Выберите ниже или напишите название любого города.';
+O.uz.notUnderstood = 'Kechirasiz, bu javobni tushunmadim.';
+O.ru.notUnderstood = 'Извините, не понял ответ.';
 O.ru.field.city = 'в какой город';

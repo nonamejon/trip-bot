@@ -349,8 +349,12 @@ export async function handleOwnerMessage(env, msg) {
       return showAgenda(env, uid, chat, L, lang, from, to);
     }
     case 'reminders_list': return listReminders(env, uid, chat, L, lang);
-    case 'off_topic': return send(env, chat, L.offTopic, mainKb(L)); // fixed text: no Gemini writing for unrelated questions
-    default: return send(env, chat, esc(r.reply || L.chatFallback), mainKb(L));
+    case 'off_topic': // fixed text: no Gemini writing for unrelated questions
+      if (filling && hardMissing(filling.fields).length) return reaskPending(env, chat, filling, modeL(env, L), L.notUnderstood);
+      return send(env, chat, L.offTopic, mainKb(L));
+    default:
+      if (filling && hardMissing(filling.fields).length && filling.updated_at > Date.now() - HOUR) return reaskPending(env, chat, filling, modeL(env, L), esc(r.reply || L.notUnderstood));
+      return send(env, chat, esc(r.reply || L.chatFallback), mainKb(L));
   }
 }
 
@@ -516,6 +520,21 @@ async function buildRequest(env, uid, chat, t, text, media, L, lang, heardText =
 }
 
 // The request card. autoSearch: he asked for the flights ("roʻyxatini ber"), so search right away if it is complete.
+// The popular cities of a country as buttons, two per row (up to 8). Any other city can be typed.
+const cityRows = (t) => {
+  if (!hardMissing(t.fields).includes('city')) return [];
+  const b = (t.fields.city_options || []).slice(0, 8).map((c, i) => [`📍 ${c.name}`, `dc:${t.id}:${i}`]);
+  return b.reduce((rows, x, i) => (i % 2 ? rows[rows.length - 1].push(x) : rows.push([x]), rows), []);
+};
+
+// A request is waiting for where or when, and his message did not give it (a greeting, a random word): ask again,
+// with the city buttons, instead of a generic answer.
+function reaskPending(env, chat, t, L, lead) {
+  const hard = hardMissing(t.fields);
+  const q = `<b>${L.askMissing(hard.map((k) => L.field[k]).join(', '))}</b>${hard.includes('city') ? '\n' + L.cityHint : ''}`;
+  return send(env, chat, `${lead ? lead + '\n\n' : ''}${q}`, kb([...cityRows(t), [[L.btnCancel, `cx:${t.id}`]]]));
+}
+
 async function showRequest(env, chat, t, L, lang, autoSearch = false) {
   if (t.fields.one_way) delete t.fields.date_to;
   const hard = hardMissing(t.fields), soft = softMissing(t.fields);
@@ -523,9 +542,8 @@ async function showRequest(env, chat, t, L, lang, autoSearch = false) {
   if (hard.length) {
     // Where or when is missing: show the card and ask for it (and the optional items) in one message.
     if (t.status !== 'collecting') await setStatus(env, t, 'collecting', 'owner'); else await saveTrip(env, t);
-    const ask = [`<b>${L.askMissing(hard.map((k) => L.field[k]).join(', '))}</b>`, soft.length ? L.askOptional(soft.map((k) => L.field[k]).join(', ')) : '', hint].filter(Boolean).join('\n');
-    const cities = hard.includes('city') ? (t.fields.city_options || []).slice(0, 4).map((c, i) => [[`📍 ${c.name}`, `dc:${t.id}:${i}`]]) : [];
-    return send(env, chat, `${draftText(L, lang, t)}\n\n${ask}`, kb([...cities, [[L.btnCancel, `cx:${t.id}`]]]));
+    const ask = [`<b>${L.askMissing(hard.map((k) => L.field[k]).join(', '))}</b>`, hard.includes('city') ? L.cityHint : '', soft.length ? L.askOptional(soft.map((k) => L.field[k]).join(', ')) : '', hint].filter(Boolean).join('\n');
+    return send(env, chat, `${draftText(L, lang, t)}\n\n${ask}`, kb([...cityRows(t), [[L.btnCancel, `cx:${t.id}`]]]));
   }
   // Enough to send. Optional gaps are asked, but the approve button is always there.
   t.draft_at = Date.now(); t.nudged = 0;

@@ -103,7 +103,7 @@ Return the complete, updated trip request as JSON:
 - window_from, window_to: when date_flex is set, the earliest departure and latest return dates of that window, "YYYY-MM-DD" ("noyabr oʻrtalari" = about the 10th to the 20th); else null.
 - origin_iata, destination_iata: the 3-letter IATA city code of the origin and destination (TAS, IST, DXB, CAN, MOW...); null if no destination yet or it is a country.
 - destination_kind: "country" if he named only a country or a big region ("Xitoy", "Turkiya", "Yevropa", "Китай") and no city; "city" otherwise.
-- city_options: only when destination_kind is "country": up to 4 cities in it that people from Tashkent most often fly to, each { name (in ${S.name}), iata (3-letter IATA city code) }; else null.
+- city_options: only when destination_kind is "country" (or a region of one): up to 8 cities there with an airport that people from Tashkent most often fly to, most popular first, each { name (in ${S.name}), iata (3-letter IATA city code) }; else null. He may also name any other city.
 - wants_search: true if in this message he asks to search now or see the flights ("reyslar roʻyxatini ber", "qidir", "variantlarni koʻrsat", "shunday yubor", "найди билеты"); else null.
 - one_way: true if he wants a one-way ticket ("bir tomonga", "в одну сторону", "qaytish kerak emas"); then date_to is null. Otherwise null.
 - travelers: the number of people travelling, ONLY if he says it ("yolgʻiz", "bir kishilik", "1 kishi", "вдвоём", "3 kishi"). Numbers in dates, times, prices or lengths of stay are never the traveler count. null if he has not said.
@@ -212,7 +212,7 @@ His message: """${text || '(none, see attachment)'}"""
 
 Decide the intent:
 - trip: a new trip or flight/hotel request, or more details/changes for the trip being collected or the draft ("2 kishi", "13-noyabrdan", "add Bobur"). Also whenever he names a destination or travel dates that differ from his current trip, even a nearby city or the same country ("Xitoyga 20 kuni uchishim kerak" while the trip is to Urumchi on the 18th): that is a new request.
-- trip_note: a wish or question about the options or booking of his current trip, without a new destination or new dates (cheaper, a direct flight, an earlier time, another hotel, seat, meal, "agentga ayt ...").
+- trip_note: only when his current trip is already being searched or booked (status sent, offers, chosen or booked): a wish or question about its options or booking, without a new destination or new dates (cheaper, a direct flight, an earlier time, another hotel, seat, meal, "agentga ayt ..."). While the trip is collecting or draft, anything about it, including complaints about the card ("why 13 passengers?"), is trip.
 - trip_docs: he sends his ticket, booking confirmation, boarding pass or hotel voucher (a file or photo) for his trip.
 - trip_status: he asks where his trip/booking stands.
 - trip_cancel: he wants to cancel a trip that has not happened yet ("bekor qil", "отмени поездку").
