@@ -4,8 +4,9 @@
 //   GET  /cal/<user id>/<token>.ics  a user's calendar, for subscribing from a phone (link comes from the bot)
 //   cron (every minute)    mock agent replies, trip checks, secretary reminders and the morning brief
 
-import { run, esc, strings, isUser, loadMembers } from './util.js';
-import { COMMANDS, STRANGER, AL } from './i18n.js';
+import { run, esc, strings, isUser, loadMembers, dshort } from './util.js';
+import { COMMANDS, STRANGER, AL, O } from './i18n.js';
+import { fetchFares, buildOptions } from './aviasales.js';
 import { tg, send } from './telegram.js';
 import { handleOwnerMessage, handleCallback, handleAgentMessage, runChecks, reportError, notifyStranger, acceptInvite } from './flow.js';
 import { runJobs } from './mock.js';
@@ -38,6 +39,21 @@ export default {
       ctx.waitUntil(work);
       await Promise.race([work, new Promise((res) => setTimeout(res, 25000))]);
       return new Response('ok');
+    }
+
+    // Maintainer check of the flight search against the live Aviasales data (read-only: nothing is saved or sent).
+    // /check/search?key=<WEBHOOK_SECRET>&to=SHA&date_from=2026-11-20[&date_to=...][&travelers=2][&window_from=...&window_to=...]
+    if (url.pathname === '/check/search') {
+      if (!env.WEBHOOK_SECRET || url.searchParams.get('key') !== env.WEBHOOK_SECRET) return new Response('forbidden', { status: 403 });
+      const q = Object.fromEntries(url.searchParams);
+      const lang = q.lang === 'ru' ? 'ru' : 'uz';
+      const f = { origin_iata: q.from || 'TAS', destination_iata: q.to, date_from: q.date_from, date_to: q.date_to, one_way: q.one_way === '1',
+        travelers: Number(q.travelers) || 1, window_from: q.window_from, window_to: q.window_to, date_flex: q.window_from ? 'flex' : undefined, flight_pref: q.pref };
+      const fares = await fetchFares(env, f);
+      const res = buildOptions(env, f, fares, { L: O[lang], lang, dshort });
+      return Response.json({ fares: fares.length, note: res.note, recommended: res.recommended, why: res.why,
+        options: res.offers.map((o) => ({ airline: o.airline, stops: o.stops, out: o.outbound, back: o.return, price: o.total_price, arrival: o.arrival, link: o.flight_link })),
+        raw: fares.slice(0, 12).map((x) => `${x.flight_number} ${x.depart}${x.depart_offset || ''} back ${x.back || '-'} | ${x.transfers} stops | $${x.price}`) });
     }
 
     if (url.pathname === '/setup') {

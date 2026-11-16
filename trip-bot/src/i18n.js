@@ -546,8 +546,39 @@ Object.assign(O.ru, {
 
 // A country instead of a city
 O.uz.field.city = 'qaysi shaharga';
-O.uz.cityHint = 'Quyidagilardan birini tanlang yoki istalgan shahar nomini yozing.';
-O.ru.cityHint = 'Выберите ниже или напишите название любого города.';
+O.uz.cityHint = 'Quyidagilardan birini tanlang yoki «Boshqa shahar» tugmasini bosib, istalgan shahar nomini yozing.';
+O.uz.btnOtherCity = '✏️ Boshqa shahar';
+O.uz.cityTypeAsk = 'Qaysi shaharga uchasiz? Shahar nomini yozing.';
+O.ru.btnOtherCity = '✏️ Другой город';
+O.ru.cityTypeAsk = 'В какой город летите? Напишите название.';
+// Search results built from Aviasales data
+Object.assign(O.uz, {
+  nonstop: 'toʻgʻri reys', stopsN: (n) => `${n} ta qoʻnish`, inAir: (h, m) => `yoʻlda ${h} soat${m ? ` ${m} daq` : ''}`,
+  nearDatesNote: (d) => `${d} uchun Aviasales’da reys topilmadi. Quyida eng yaqin sanalardagi reyslar — sanasiga eʼtibor bering.`,
+  fewFaresNote: (d) => `${d} uchun Aviasales’da shu reyslar topildi. Boshqalari ham boʻlishi mumkin — havoladagi jonli qidiruvda koʻrinadi.`,
+  whyCheapDirect: 'eng arzon va toʻgʻri reys', whyDirect: 'toʻgʻri reys, qoʻnishsiz', whyCheapest: 'eng arzon narx', whyFewStops: 'kamroq qoʻnish, qulayroq yoʻl',
+  fareTerms: 'Bagaj va qaytarish shartlari har bir tarifda farq qiladi — Aviasales’da koʻrsatilgan.',
+  hotelsTitle: (dates) => `🏨 <b>Mehmonxonalar</b> (${dates}; narxlar taxminiy)`,
+  hotelsAll: 'Booking.com’da barcha mehmonxonalar',
+  hotelNeedsDates: '🏨 Qaytish sanasini yozsangiz, shu kunlar uchun mehmonxonalarni ham topib beraman.',
+  noFaresFound: (route, d) => `Kechirasiz, Aviasales’da ${route} yoʻnalishi boʻyicha ${d} uchun saqlangan narxlar topilmadi. Taxminiy maʼlumot bermaslik uchun reyslarni oʻzim toʻqib chiqarmadim.\n\nQuyidagi havolada Aviasales jonli qidiruvi ochiladi, yoki sanani oʻzgartirib qayta qidirishim mumkin.`,
+  btnLiveSearch: '🔎 Aviasales’da jonli qidiruv', btnChangeDates: '✏️ Sanani oʻzgartirish',
+  forPeople: (n) => `${n} kishi uchun`,
+});
+Object.assign(O.ru, {
+  nonstop: 'прямой', stopsN: (n) => `${n} ${n === 1 ? 'пересадка' : n < 5 ? 'пересадки' : 'пересадок'}`, inAir: (h, m) => `в пути ${h} ч${m ? ` ${m} мин` : ''}`,
+  nearDatesNote: (d) => `На ${d} рейсов на Aviasales не нашлось. Ниже рейсы на ближайшие даты — обратите внимание на дату.`,
+  fewFaresNote: (d) => `На ${d} на Aviasales нашлись эти рейсы. Могут быть и другие — они видны в живом поиске по ссылке.`,
+  whyCheapDirect: 'самый дешёвый и прямой', whyDirect: 'прямой рейс, без пересадок', whyCheapest: 'самая низкая цена', whyFewStops: 'меньше пересадок, удобнее',
+  fareTerms: 'Багаж и условия возврата зависят от тарифа — они указаны на Aviasales.',
+  hotelsTitle: (dates) => `🏨 <b>Отели</b> (${dates}; цены примерные)`,
+  hotelsAll: 'все отели на Booking.com',
+  hotelNeedsDates: '🏨 Напишите дату возвращения — подберу и отели на эти дни.',
+  noFaresFound: (route, d) => `Извините, на Aviasales нет сохранённых цен по направлению ${route} на ${d}. Чтобы не давать недостоверных данных, я не стал придумывать рейсы.\n\nПо ссылке ниже откроется живой поиск Aviasales, или я могу поискать на другие даты.`,
+  btnLiveSearch: '🔎 Живой поиск на Aviasales', btnChangeDates: '✏️ Изменить даты',
+  forPeople: (n) => `на ${n} чел.`,
+});
+O.ru.cityHint = 'Выберите ниже или нажмите «Другой город» и напишите любой.';
 O.uz.notUnderstood = 'Kechirasiz, bu javobni tushunmadim.';
 O.ru.notUnderstood = 'Извините, не понял ответ.';
 O.ru.field.city = 'в какой город';

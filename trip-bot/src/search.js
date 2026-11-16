@@ -8,11 +8,11 @@
 //
 // It runs as a cron job (jobs table, kind search_offers): a search takes 30-60 s, too long for the webhook.
 
-import { run, one, getTrip, logEvent, strings, MIN } from './util.js';
+import { run, one, getTrip, logEvent, strings, dshort, MIN } from './util.js';
 import { gemini } from './gemini.js';
-import { handleAgentText, reportError } from './flow.js';
+import { handleAgentText, reportError, showSearchResults, searchNotFound } from './flow.js';
 import { send, kb } from './telegram.js';
-import { fetchFares } from './aviasales.js';
+import { fetchFares, buildOptions } from './aviasales.js';
 
 const isDate = (s) => /^\d{4}-\d{2}-\d{2}$/.test(s || '');
 
@@ -74,11 +74,43 @@ Use only airlines that really fly this route and real hotels. Plain text, no mar
 }
 
 // Cron job: search, then hand the text to the normal parsing and comparison.
+// Hotels for the stay, from Google Search: names only from what Gemini found; prices labelled approximate.
+// Lines "Name | stars | area | price per night USD". Returns [] on any problem (the flights still go out).
+export async function suggestHotels(env, f, checkin, checkout) {
+  const where = f.area_en || f.destination_en || f.destination;
+  const prompt = `Use Google Search to find up to 3 real hotels in ${where} for ${checkin} to ${checkout}${f.hotel ? ` that fit this wish: "${f.hotel}"` : ''}${f.notes ? ` (trip notes: "${f.notes}")` : ''}.
+Different price levels if possible. Only hotels you actually found; if you are not sure, give fewer or none.
+Answer with one line per hotel, nothing else: name | stars (number) | area or landmark | typical price per night in USD (number)`;
+  try {
+    const text = await gemini(env, { prompt, tools: [{ google_search: {} }], temperature: 0.2, timeoutMs: 60000 });
+    return text.split('\n').map((l) => l.replace(/^\s*(?:[-*•]|\d+[.)])\s*/, '').split('|').map((x) => x.trim()))
+      .filter((p) => p.length >= 4 && p[0] && p[0].length < 90)
+      .map(([name, stars, area, price]) => ({ name, stars: /^\d(\.\d)?$/.test(stars) ? +stars : null, area: area || null, price_night: Number(String(price).replace(/[^\d.]/g, '')) || null }))
+      .slice(0, 3);
+  } catch (e) { await reportError(env, e, 'hotels'); return []; }
+}
+
 export async function runSearch(env, job) {
   const t = await getTrip(env, job.trip_id);
   if (!t || t.status !== 'sent') return;
   const payload = JSON.parse(job.payload || '{}');
   try {
+    // With the Aviasales data (the live setup): options are built from real fares only, in code. Nothing is
+    // invented; when there is nothing on Aviasales, he is told so with a live-search link.
+    if (env.TRAVELPAYOUTS_TOKEN && /^[A-Z]{3}$/.test(t.fields.destination_iata || '')) {
+      const { lang, L } = await strings(env, t.owner_id);
+      const fares = await fetchFares(env, t.fields);
+      const res = buildOptions(env, t.fields, fares, { L, lang, dshort });
+      await logEvent(env, 'bot', 'search_done', t.id, `${fares.length} fares, ${res.offers.length} options`);
+      if (!res.offers.length) return searchNotFound(env, t);
+      const r = res.offers[res.recommended];
+      const wantsHotel = !t.fields.one_way && !/mehmonxona kerak emas|отель не нужен|no hotel/i.test(`${t.fields.hotel || ''} ${t.fields.notes || ''}`);
+      const checkin = r.arrival ? r.arrival.slice(0, 10) : r.date_out;
+      let hotels = null;
+      if (wantsHotel && r.date_back && r.date_back > checkin) hotels = { checkin, checkout: r.date_back, list: await suggestHotels(env, t.fields, checkin, r.date_back) };
+      t.fields.price_source = 'aviasales';
+      return showSearchResults(env, t, res, hotels, wantsHotel);
+    }
     let fares = [];
     try { fares = await fetchFares(env, t.fields); } catch (e) { await reportError(env, e, 'aviasales'); }
     t.fields.price_source = fares.length ? 'aviasales' : 'web';

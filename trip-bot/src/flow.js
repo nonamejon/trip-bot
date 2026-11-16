@@ -114,6 +114,7 @@ function draftText(L, lang, t) {
 function compareText(env, L, lang, t) {
   const out = [`<b>${L.nOptions(t.offers.length)} · ${esc(t.fields.destination)}</b> · ${t.code}`];
   if (t.fields.offers_note) out.push('', `ℹ️ <i>${esc(t.fields.offers_note)}</i>`);
+  if (t.offers.some((o) => o.src === 'aviasales')) return compareRealText(env, L, lang, t, out);
   t.offers.forEach((o, i) => {
     out.push('', `<b>${esc(o.label)}</b> · ${esc(money(o, lang))}${priceSplit(L, o)}${i === t.recommended ? ` · <u>${L.recommended}</u>` : ''}`,
       `${L.flight}: ${esc([o.airline, o.outbound, o.stops].filter(Boolean).join(' · ') || L.notStated)}`,
@@ -125,6 +126,28 @@ function compareText(env, L, lang, t) {
   });
   if (t.recommended != null && t.reason && t.offers[t.recommended]) out.push('', `<i>${L.why(esc(t.offers[t.recommended].label))}: ${esc(t.reason)}</i>`);
   if (t.offers.some((o) => o.flight_link || o.date_out)) out.push('', `<i>${t.fields.price_source === 'aviasales' ? L.pricesAviasales : L.pricesApprox}</i>`);
+  return out.filter((x) => x !== null).join('\n');
+}
+
+// Options built from Aviasales data: each line is real data (date, time, stops, price); hotels are a separate,
+// clearly approximate list for the stay dates of the recommended option.
+function compareRealText(env, L, lang, t, out) {
+  const f = t.fields, n = Number(f.travelers) || 1;
+  t.offers.forEach((o, i) => {
+    out.push('', `<b>${esc(o.label)}</b> · ${esc(money(o, lang))}${n > 1 ? ` (${L.forPeople(n)})` : ''}${i === t.recommended ? ` · <u>${L.recommended}</u>` : ''}`,
+      `✈️ ${esc([o.airline, o.stops].filter(Boolean).join(' · '))}`,
+      `${L.out}: ${esc(o.outbound)}`,
+      o.return ? `${L.back}: ${esc(o.return)}` : null,
+      linksLine(env, L, t, o));
+  });
+  if (t.recommended != null && t.reason && t.offers[t.recommended]) out.push('', `<i>${L.why(esc(t.offers[t.recommended].label))}: ${esc(t.reason)}</i>`);
+  const h = f.hotels;
+  if (h && h.checkin && h.checkout) {
+    const span = { date_out: h.checkin, date_back: h.checkout };
+    const lines = (h.list || []).map((x) => `• <a href="${href(bookingComUrl(f, span, x.name))}">${esc(x.name)}</a>${x.stars ? ` ${x.stars}★` : ''}${x.area ? ` · ${esc(x.area)}` : ''}${x.price_night ? ` · ~${Math.round(x.price_night)} USD${L.perNight}` : ''}`);
+    out.push('', L.hotelsTitle(`${dshort(h.checkin, lang)} – ${dshort(h.checkout, lang)}`), ...lines, `🔗 <a href="${href(bookingComUrl(f, span))}">${L.hotelsAll}</a>`);
+  } else if (f.hotel_hint) out.push('', L.hotelNeedsDates);
+  out.push('', `<i>${L.pricesAviasales} ${L.fareTerms}</i>`);
   return out.filter((x) => x !== null).join('\n');
 }
 
@@ -141,6 +164,10 @@ const isAviasales = (u) => { try { return /(^|\.)aviasales\.(uz|ru|com|kz|kg|by|
 // Booking.com search for that hotel by name. Airline and hotel page URLs written by Gemini are often made up (404),
 // so they are not shown.
 function optionLinks(env, L, t, o) {
+  if (o.src === 'aviasales') { // Aviasales for exactly this option's dates; Booking.com only when the stay dates are known
+    const stay = o.date_back ? { date_out: (o.arrival || o.date_out).slice(0, 10), date_back: o.date_back } : null;
+    return [['Aviasales', o.flight_link], ['Booking.com', stay ? bookingComUrl(t.fields, stay, o.hotel || null) : null]].filter(([, u]) => u);
+  }
   const flight = safeUrl(o.flight_link);
   const avia = flight && isAviasales(flight) && (Number(t.fields.travelers) || 1) <= 1 ? flight : aviasalesUrl(env, t.fields, o);
   return [['Aviasales', avia], ['Booking.com', o.hotel ? bookingComUrl(t.fields, o, o.hotel) : null]].filter(([, u]) => u);
@@ -520,11 +547,12 @@ async function buildRequest(env, uid, chat, t, text, media, L, lang, heardText =
 }
 
 // The request card. autoSearch: he asked for the flights ("roʻyxatini ber"), so search right away if it is complete.
-// The popular cities of a country as buttons, two per row (up to 8). Any other city can be typed.
-const cityRows = (t) => {
+// The 4 most popular cities of a country as buttons, two per row, and "other city" (he types its name).
+const cityRows = (t, L) => {
   if (!hardMissing(t.fields).includes('city')) return [];
-  const b = (t.fields.city_options || []).slice(0, 8).map((c, i) => [`📍 ${c.name}`, `dc:${t.id}:${i}`]);
-  return b.reduce((rows, x, i) => (i % 2 ? rows[rows.length - 1].push(x) : rows.push([x]), rows), []);
+  const b = (t.fields.city_options || []).slice(0, 4).map((c, i) => [`📍 ${c.name}`, `dc:${t.id}:${i}`]);
+  const rows = b.reduce((r, x, i) => (i % 2 ? r[r.length - 1].push(x) : r.push([x]), r), []);
+  return [...rows, [[L.btnOtherCity, `dco:${t.id}`]]];
 };
 
 // A request is waiting for where or when, and his message did not give it (a greeting, a random word): ask again,
@@ -532,7 +560,7 @@ const cityRows = (t) => {
 function reaskPending(env, chat, t, L, lead) {
   const hard = hardMissing(t.fields);
   const q = `<b>${L.askMissing(hard.map((k) => L.field[k]).join(', '))}</b>${hard.includes('city') ? '\n' + L.cityHint : ''}`;
-  return send(env, chat, `${lead ? lead + '\n\n' : ''}${q}`, kb([...cityRows(t), [[L.btnCancel, `cx:${t.id}`]]]));
+  return send(env, chat, `${lead ? lead + '\n\n' : ''}${q}`, kb([...cityRows(t, L), [[L.btnCancel, `cx:${t.id}`]]]));
 }
 
 async function showRequest(env, chat, t, L, lang, autoSearch = false) {
@@ -543,7 +571,7 @@ async function showRequest(env, chat, t, L, lang, autoSearch = false) {
     // Where or when is missing: show the card and ask for it (and the optional items) in one message.
     if (t.status !== 'collecting') await setStatus(env, t, 'collecting', 'owner'); else await saveTrip(env, t);
     const ask = [`<b>${L.askMissing(hard.map((k) => L.field[k]).join(', '))}</b>`, hard.includes('city') ? L.cityHint : '', soft.length ? L.askOptional(soft.map((k) => L.field[k]).join(', ')) : '', hint].filter(Boolean).join('\n');
-    return send(env, chat, `${draftText(L, lang, t)}\n\n${ask}`, kb([...cityRows(t), [[L.btnCancel, `cx:${t.id}`]]]));
+    return send(env, chat, `${draftText(L, lang, t)}\n\n${ask}`, kb([...cityRows(t, L), [[L.btnCancel, `cx:${t.id}`]]]));
   }
   // Enough to send. Optional gaps are asked, but the approve button is always there.
   t.draft_at = Date.now(); t.nudged = 0;
@@ -691,7 +719,7 @@ export async function handleCallback(env, cq) {
   if (await handleSecCallback(env, { a, id: idStr, arg: argStr, uid, chat, L, lang, answer, dropKeyboard })) return;
 
   // My trips: a trip's card and what can be done from it
-  if (['tv', 'ov', 'td', 'aw', 'tc', 'tf', 'tx', 'bk', 'bl', 'rc', 'sr', 'tz', 'dc'].includes(a)) {
+  if (['tv', 'ov', 'td', 'aw', 'tc', 'tf', 'tx', 'bk', 'bl', 'rc', 'sr', 'tz', 'dc', 'dco'].includes(a)) {
     const t = await getTrip(env, +idStr);
     if (!t || t.owner_id !== uid) return answer(L.staleBtn);
     await answer();
@@ -717,6 +745,7 @@ export async function handleCallback(env, cq) {
         if (t.status !== 'chosen') return send(env, chat, L.staleBtn);
         t.chosen = null; await setStatus(env, t, 'offers', 'owner'); return offersMessage(env, t, L, lang);
       case 'sr': return ['sent', 'offers'].includes(t.status) ? otherOptions(env, t) : send(env, chat, L.staleBtn);
+      case 'dco': return ['collecting', 'draft'].includes(t.status) ? send(env, chat, L.cityTypeAsk) : send(env, chat, L.staleBtn);
       case 'dc': { // a city for a country-level request
         const c = (t.fields.city_options || [])[+argStr];
         if (!c || !['collecting', 'draft'].includes(t.status)) return send(env, chat, L.staleBtn);
@@ -863,6 +892,28 @@ async function getTripByThread(env, threadId) {
 async function outdated(env, t) {
   const cur = await one(env, 'SELECT status, sent_at FROM trips WHERE id = ?', t.id);
   return !cur || cur.status !== t.status || (cur.sent_at ?? null) !== (t.sent_at ?? null);
+}
+
+// Search mode with the Aviasales data: show the options built from real fares (search.js / aviasales.buildOptions).
+export async function showSearchResults(env, t, res, hotels, wantsHotel) {
+  if (await outdated(env, t)) throw new StaleTrip(`${t.code}: search results dropped, trip changed meanwhile`);
+  const { lang, L } = await strings(env, t.owner_id);
+  t.offers = res.offers; t.recommended = res.offers.length > 1 ? res.recommended : null; t.reason = res.offers.length > 1 ? res.why : null;
+  t.fields.offers_note = res.note; t.fields.hotels = hotels; t.fields.hotel_hint = !hotels && wantsHotel ? 1 : 0;
+  t.agent_texts = []; t.offers_at = Date.now(); t.nudged_offers = 0;
+  await setStatus(env, t, 'offers', 'bot');
+  return offersMessage(env, t, L, lang);
+}
+
+// Nothing on Aviasales for his dates: say so plainly (no invented flights), with a live search and a way to change the dates.
+export async function searchNotFound(env, t) {
+  if (await outdated(env, t)) throw new StaleTrip(`${t.code}: not-found dropped, trip changed meanwhile`);
+  const { lang, L } = await strings(env, t.owner_id);
+  t.nudged = 1; t.draft_at = Date.now();
+  await setStatus(env, t, 'draft', 'bot');
+  const f = t.fields, url = aviasalesUrl(env, f);
+  const when = isDate(f.date_from) ? dshort(f.date_from, lang) + (isDate(f.date_to) && !f.one_way ? ` – ${dshort(f.date_to, lang)}` : '') : (f.date_flex || '');
+  return send(env, t.owner_id, L.noFaresFound(route(L, t), esc(when)), kb([...(url ? [[[L.btnLiveSearch, url]]] : []), [[L.btnChangeDates, `ed:${t.id}`]]]));
 }
 
 export async function handleAgentText(env, t, text, media) {

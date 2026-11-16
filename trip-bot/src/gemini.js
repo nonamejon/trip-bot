@@ -103,7 +103,7 @@ Return the complete, updated trip request as JSON:
 - window_from, window_to: when date_flex is set, the earliest departure and latest return dates of that window, "YYYY-MM-DD" ("noyabr oʻrtalari" = about the 10th to the 20th); else null.
 - origin_iata, destination_iata: the 3-letter IATA city code of the origin and destination (TAS, IST, DXB, CAN, MOW...); null if no destination yet or it is a country.
 - destination_kind: "country" if he named only a country or a big region ("Xitoy", "Turkiya", "Yevropa", "Китай") and no city; "city" otherwise.
-- city_options: only when destination_kind is "country" (or a region of one): up to 8 cities there with an airport that people from Tashkent most often fly to, most popular first, each { name (in ${S.name}), iata (3-letter IATA city code) }; else null. He may also name any other city.
+- city_options: only when destination_kind is "country" (or a region of one): the 4 cities there with an airport that people from Tashkent most often fly to, most popular first, each { name (in ${S.name}), iata (3-letter IATA city code) }; else null. He may also name any other city.
 - wants_search: true if in this message he asks to search now or see the flights ("reyslar roʻyxatini ber", "qidir", "variantlarni koʻrsat", "shunday yubor", "найди билеты"); else null.
 - one_way: true if he wants a one-way ticket ("bir tomonga", "в одну сторону", "qaytish kerak emas"); then date_to is null. Otherwise null.
 - travelers: the number of people travelling, ONLY if he says it ("yolgʻiz", "bir kishilik", "1 kishi", "вдвоём", "3 kishi"). Numbers in dates, times, prices or lengths of stay are never the traveler count. null if he has not said.

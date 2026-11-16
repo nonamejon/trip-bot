@@ -152,6 +152,8 @@ export function zonedToUtc(env, iso, zone) {
   const guess = localToUtc({ TZ_OFFSET_MIN: 0 }, iso);
   if (guess == null) return null;
   if (!zone) return localToUtc(env, iso);
+  const fixed = String(zone).match(/^([+-])(\d\d):(\d\d)$/); // an offset like "+08:00" (Aviasales gives these)
+  if (fixed) return guess - (fixed[1] === '-' ? -1 : 1) * (+fixed[2] * 60 + +fixed[3]) * 60e3;
   try {
     const offsetAt = (ms) => {
       const p = Object.fromEntries(new Intl.DateTimeFormat('en-US', { timeZone: zone, hourCycle: 'h23', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })

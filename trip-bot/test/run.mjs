@@ -59,6 +59,9 @@ globalThis.fetch = async (url, init = {}) => {
         { flight_number: 'TK 371', airline: 'Turkish Airlines', from_city: 'Toshkent', from_iata: 'TAS', to_city: 'Istanbul', to_iata: 'IST', departure_local: ticketDepart, arrival_local: ticketDepart.slice(0, 11) + '12:30' },
         { flight_number: 'TK 370', airline: 'Turkish Airlines', from_city: 'Istanbul', from_iata: 'IST', to_city: 'Toshkent', to_iata: 'TAS', departure_local: ticketBack, arrival_local: null, departure_tz: ticketTz ? 'Europe/Istanbul' : null },
       ] };
+    } else if (prompt.startsWith('Use Google Search to find up to 3 real hotels')) {
+      geminiCalls.push('hotels');
+      out = '1. Grand Levent | 5 | Levent | 180\n- Sisli Park | 4 | Şişli | 120';
     } else if (prompt.startsWith('You are a travel agent in Tashkent searching')) {
       geminiCalls.push('search' + (body.tools ? '+google' : ''));
       lastSearchPrompt = prompt;
@@ -484,19 +487,18 @@ await say('/passport');
 assert(!/agent/i.test(lastText()), 'search mode: passport instructions do not mention an agent');
 await say('Istanbul again please, same as before, 23 kg');
 const sTrip = status().id;
-env.TRAVELPAYOUTS_TOKEN = 'tp-test'; env.TRAVELPAYOUTS_MARKER = '12345';
+env.TRAVELPAYOUTS_MARKER = '12345'; // no token here: the fallback path (Gemini with Google Search writes the options)
 await tap(`ap:${sTrip}`); show('search mode: approve');
 assert(sent.filter((x) => x.method === 'sendMessage').at(-2).p.reply_markup.inline_keyboard[0][0].text === 'Tasdiqlash va qidirish', 'search mode: the card says approve and search');
 assert(lastText().startsWith('🔎') && sqlite.prepare(`SELECT COUNT(*) c FROM jobs WHERE kind = 'search_offers' AND trip_id = ? AND done_at IS NULL`).get(sTrip).c === 1, 'approve queues a search, not a message to an agent');
 await cron(); show('cron: search');
 assert(geminiCalls.includes('search+google') && status().status === 'offers', 'search runs with Google Search and shows options (no clarification round)');
 assert(lastText().includes('aviasales.uz/search/TAS1212IST15121?marker=12345') && lastText().includes('booking.com/searchresults.html?ss=Grand+Levent%2C+Istanbul') && !lastText().includes('uzairways.com') && !lastText().includes('grandlevent.example') && !lastText().includes('google.com'), 'options link to Aviasales (with the affiliate marker) and a Booking.com search for that hotel by name, never page URLs Gemini wrote');
-assert(lastSearchPrompt.includes('Real fares found on Aviasales') && lastSearchPrompt.includes('"price":412') && faresQueries.some((q) => q.get('origin') === 'TAS' && q.get('destination') === 'IST' && q.get('departure_at') === '2026-11-12' && q.get('return_at') === '2026-11-15'), 'with a Travelpayouts token the search is built from real Aviasales fares');
-assert(lastText().includes('Aviasales’dan'), 'the card says the prices come from Aviasales');
+assert(lastText().includes('Narxlar taxminiy'), 'without Aviasales data the card says the prices are approximate');
 assert(!lastText().includes('turkishairlines.com'), 'a bare home page (airline site with nothing filled in) is not shown');
 assert(lastText().includes('450 USD (✈️ 300 + 🏨 50/kecha)') && !/narxi nomaʼlum \(/.test(lastText()), 'only flight and hotel prices given: the total is computed (no "price unknown" next to prices)');
 assert(lastText().includes('1 450 USD (✈️ 412 + 🏨 346/kecha)'), 'the total is split into the flight (as on Aviasales) and the hotel per night');
-delete env.TRAVELPAYOUTS_TOKEN; delete env.TRAVELPAYOUTS_MARKER;
+delete env.TRAVELPAYOUTS_MARKER;
 assert(!sent.slice(-6).some((x) => (x.p.text || '').includes('Bot → agent')), 'nothing is mirrored to an agent');
 assert(lastText().includes('ss=Sisli+Park%2C+Istanbul&amp;checkin=2026-12-12&amp;checkout=2026-12-15'), 'hotel search: the hotel by name, in its city, with the dates');
 await tap(`ch:${sTrip}:0`); show('search mode: choose');
@@ -508,6 +510,32 @@ assert(sent.slice(n0).some((x) => (x.p.text || '').includes('qidiruvdan olindi')
 assert(JSON.parse(sqlite.prepare('SELECT fields FROM trips WHERE id = ?').get(sTrip).fields).date_from === '2026-11-12', 'dates kept');
 await tap(`tv:${sTrip}`);
 assert(lastKb().includes(`bl:${sTrip}`) && !lastKb().includes('aw:'), 'card: booking links, no "write to agent"');
+
+// with the Aviasales data: options are built from real fares only (no Gemini for flights); hotels separately
+{
+  env.TRAVELPAYOUTS_TOKEN = 'tp-test'; env.TRAVELPAYOUTS_MARKER = '12345';
+  const realTrip = async (from, to) => {
+    await say('Istanbul again please, same as before, 23 kg'); const id = status().id;
+    const f = JSON.parse(sqlite.prepare('SELECT fields FROM trips WHERE id = ?').get(id).fields);
+    Object.assign(f, { date_from: from, date_to: to, destination_iata: 'IST' });
+    sqlite.prepare('UPDATE trips SET fields = ? WHERE id = ?').run(JSON.stringify(f), id);
+    const g0 = geminiCalls.length;
+    await tap(`ap:${id}`); await cron();
+    return { id, gem: geminiCalls.slice(g0) };
+  };
+  let r = await realTrip('2026-11-12', '2026-11-15'); show('real fares: exact date');
+  const ro = JSON.parse(sqlite.prepare('SELECT offers FROM trips WHERE id = ?').get(r.id).offers);
+  assert(status().status === 'offers' && !r.gem.some((g) => g.startsWith('search')) && r.gem.includes('hotels'), 'real fares: flights built in code (Gemini only suggests hotels)');
+  assert(ro.length === 1 && ro[0].airline === 'Uzbekistan Airways · HY 271' && lastText().includes('12-noyabr, 07:40') && lastText().includes('toʻgʻri reys') && lastText().includes('412 USD'), 'the option shows the real flight, its date and time, stops and price');
+  assert(lastText().includes('aviasales.uz/search/TAS1211IST15111?marker=12345') && !lastText().includes('Bagaj:') && !lastText().includes('Bekor qilish:'), 'Aviasales link for exactly those dates; no guessed baggage or refund terms');
+  assert(lastText().includes('ss=Grand+Levent%2C+Istanbul&amp;checkin=2026-11-12&amp;checkout=2026-11-15') && lastText().includes('</a> 5★ · Levent · ~180 USD/kecha') && lastText().includes('taxminiy'), 'hotels: separate list, Booking.com by name with the stay dates, prices marked approximate');
+  assert(lastText().includes('Boshqalari ham boʻlishi mumkin'), 'only one flight that day: said so, not padded');
+  r = await realTrip('2026-11-13', '2026-11-16'); show('real fares: nearest dates');
+  assert(lastText().includes('eng yaqin sanalardagi') && lastText().includes('12-noyabr (-1), 07:40'), 'nothing on his date: the nearest dates, clearly labelled');
+  r = await realTrip('2026-12-01', '2026-12-05'); show('real fares: nothing');
+  assert(status().status === 'draft' && lastText().includes('topilmadi') && lastKb().includes('"url":"https://www.aviasales.uz/search/TAS0112IST05121?marker=12345') && lastKb().includes(`ed:${r.id}`), 'nothing on Aviasales: said plainly, with a live-search link and "change dates", no invented flights');
+  delete env.TRAVELPAYOUTS_TOKEN; delete env.TRAVELPAYOUTS_MARKER;
+}
 
 // a failed search is retried once, then he gets a retry button
 await say('Istanbul again please, same as before, 23 kg'); const sTrip2 = status().id;
@@ -571,7 +599,9 @@ assert(sent.slice(n0).some((x) => x.p.chat_id === 999 && x.p.text.includes('shax
 await say('ertaga Xitoyga uchishim kerak, taqdimotga'); show('country instead of a city');
 const cnTrip = status().id;
 assert(status().status === 'collecting' && lastText().includes('qaysi shaharga') && lastKb().includes(`dc:${cnTrip}:0`) && lastKb().includes('📍 Pekin'), 'a country: the bot asks which city, with buttons for the main ones');
-assert(lastText().includes(O.uz.cityHint) && JSON.parse(lastKb()).inline_keyboard[0].length === 2, 'it says any city can be typed; cities two per row');
+assert(lastText().includes(O.uz.cityHint) && JSON.parse(lastKb()).inline_keyboard[0].length === 2 && lastKb().includes(`dco:${cnTrip}`), 'cities two per row, plus "other city"');
+await tap(`dco:${cnTrip}`);
+assert(lastText() === O.uz.cityTypeAsk, '"other city" asks him to type it');
 await say('asdfgh'); show('random answer to "which city"');
 assert(lastText().startsWith(O.uz.notUnderstood) && lastKb().includes(`dc:${cnTrip}:0`) && status().status === 'collecting', 'a random answer: "did not understand" and the city question again, not the off-topic text');
 await say('nihao');
