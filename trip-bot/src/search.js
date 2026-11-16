@@ -19,11 +19,18 @@ const isDate = (s) => /^\d{4}-\d{2}-\d{2}$/.test(s || '');
 // ---------- links ----------
 export const safeUrl = (u) => (typeof u === 'string' && /^https?:\/\/[^\s"<>]+$/.test(u) && u.length < 1500 ? u : null);
 
-export function bookingComUrl(f, o = {}) {
+// A Booking.com search: for a hotel by name when given ("Hilton Urumqi, Urumqi"), else the area. With dates when
+// both are known; without a return date it opens the search without dates (always a working page).
+export function bookingComUrl(f, o = {}, hotel = null) {
   const inDate = isDate(o.date_out) ? o.date_out : f.date_from;
   const outDate = isDate(o.date_back) ? o.date_back : f.date_to;
-  if (!isDate(inDate) || !isDate(outDate) || outDate <= inDate) return null;
-  const p = new URLSearchParams({ ss: f.area_en || f.destination_en || f.destination, checkin: inDate, checkout: outDate, group_adults: String(f.travelers || 1), no_rooms: '1', selected_currency: 'USD' });
+  const city = f.destination_en || f.destination;
+  const name = hotel ? String(hotel).replace(/\s*[,(·-]?\s*\d(\.\d)?\s*(\*|yulduz\w*|звезд\w*|stars?)\)?/gi, '').trim() : null;
+  const ss = name ? (city && !name.toLowerCase().includes(String(city).toLowerCase()) ? `${name}, ${city}` : name) : (f.area_en || city);
+  if (!ss) return null;
+  const p = new URLSearchParams({ ss });
+  if (isDate(inDate) && isDate(outDate) && outDate > inDate) { p.set('checkin', inDate); p.set('checkout', outDate); }
+  p.set('group_adults', String(f.travelers || 1)); p.set('no_rooms', '1'); p.set('selected_currency', 'USD');
   return `https://www.booking.com/searchresults.html?${p}`;
 }
 
@@ -75,7 +82,7 @@ export async function runSearch(env, job) {
     let fares = [];
     try { fares = await fetchFares(env, t.fields); } catch (e) { await reportError(env, e, 'aviasales'); }
     t.fields.price_source = fares.length ? 'aviasales' : 'web';
-    const text = await gemini(env, { prompt: searchPrompt(env, t, payload, fares), tools: [{ google_search: {} }], temperature: 0.3, timeoutMs: 90000 });
+    const text = await gemini(env, { prompt: searchPrompt(env, t, payload, fares), tools: [{ google_search: {} }], temperature: 0.3, timeoutMs: 120000 });
     await logEvent(env, 'bot', 'search_done', t.id, text.slice(0, 300));
     t.agent_texts = []; // only this search's results are parsed
     await handleAgentText(env, { ...t, agent_texts: [] }, text, []); // saves t.fields (price_source) with the offers

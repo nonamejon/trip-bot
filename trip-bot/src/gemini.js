@@ -211,8 +211,8 @@ ${ctx.pending ? `His previous message was not complete and you asked him a quest
 His message: """${text || '(none, see attachment)'}"""
 
 Decide the intent:
-- trip: a new trip or flight/hotel request, or more details/changes for the trip being collected or the draft ("2 kishi", "13-noyabrdan", "add Bobur").
-- trip_note: something for the travel agent about the trip the agent is already working on (seat, meal, a question for the agent, "agentga ayt ...").
+- trip: a new trip or flight/hotel request, or more details/changes for the trip being collected or the draft ("2 kishi", "13-noyabrdan", "add Bobur"). Also whenever he names a destination or travel dates that differ from his current trip, even a nearby city or the same country ("Xitoyga 20 kuni uchishim kerak" while the trip is to Urumchi on the 18th): that is a new request.
+- trip_note: a wish or question about the options or booking of his current trip, without a new destination or new dates (cheaper, a direct flight, an earlier time, another hotel, seat, meal, "agentga ayt ...").
 - trip_docs: he sends his ticket, booking confirmation, boarding pass or hotel voucher (a file or photo) for his trip.
 - trip_status: he asks where his trip/booking stands.
 - trip_cancel: he wants to cancel a trip that has not happened yet ("bekor qil", "отмени поездку").

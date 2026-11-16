@@ -28,6 +28,8 @@ const ROUTE = [
   ['отмени поездку', trip('offers'), (r) => r.intent === 'trip_cancel'],
   ['safarim qanday holatda?', trip('sent'), (r) => r.intent === 'trip_status'],
   ['arzonroq variant topib ber', trip('offers'), (r) => ['trip_note', 'trip'].includes(r.intent)],
+  ['xitoyga 20 kuni uchishim kerak', trip('offers', 'Urumchi'), (r) => r.intent === 'trip'], // real case: became a wish on the Urumchi search
+  ['toʻgʻri reys boʻlsin', trip('offers', 'Urumchi'), (r) => r.intent === 'trip_note'],
   ['ertaga soat 15:00 da Hilton mehmonxonasida uchrashuv', null, (r) => r.intent === 'event' && r.ev_time === '15:00'],
   ['встреча с инвесторами в пятницу в 10 утра', null, (r) => r.intent === 'event' && r.ev_time === '10:00'],
   ['juma kuni Bobur bilan uchrashuv bor', null, (r) => r.intent === 'event' && (!!r.question || !r.ev_time)],

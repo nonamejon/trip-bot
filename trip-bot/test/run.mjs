@@ -485,7 +485,7 @@ assert(sent.filter((x) => x.method === 'sendMessage').at(-2).p.reply_markup.inli
 assert(lastText().startsWith('🔎') && sqlite.prepare(`SELECT COUNT(*) c FROM jobs WHERE kind = 'search_offers' AND trip_id = ? AND done_at IS NULL`).get(sTrip).c === 1, 'approve queues a search, not a message to an agent');
 await cron(); show('cron: search');
 assert(geminiCalls.includes('search+google') && status().status === 'offers', 'search runs with Google Search and shows options (no clarification round)');
-assert(lastText().includes('aviasales.uz/search/TAS1212IST15121?marker=12345') && lastText().includes('uzairways.com') && lastText().includes('booking.com') && !lastText().includes('google.com'), 'options link to Aviasales (with the affiliate marker), the airline, the hotel and Booking.com');
+assert(lastText().includes('aviasales.uz/search/TAS1212IST15121?marker=12345') && lastText().includes('booking.com/searchresults.html?ss=Grand+Levent%2C+Istanbul') && !lastText().includes('uzairways.com') && !lastText().includes('grandlevent.example') && !lastText().includes('google.com'), 'options link to Aviasales (with the affiliate marker) and a Booking.com search for that hotel by name, never page URLs Gemini wrote');
 assert(lastSearchPrompt.includes('Real fares found on Aviasales') && lastSearchPrompt.includes('"price":412') && faresQueries.some((q) => q.get('origin') === 'TAS' && q.get('destination') === 'IST' && q.get('departure_at') === '2026-11-12' && q.get('return_at') === '2026-11-15'), 'with a Travelpayouts token the search is built from real Aviasales fares');
 assert(lastText().includes('Aviasales’dan'), 'the card says the prices come from Aviasales');
 assert(!lastText().includes('turkishairlines.com'), 'a bare home page (airline site with nothing filled in) is not shown');
@@ -493,7 +493,7 @@ assert(lastText().includes('450 USD (✈️ 300 + 🏨 50/kecha)') && !/narxi no
 assert(lastText().includes('1 450 USD (✈️ 412 + 🏨 346/kecha)'), 'the total is split into the flight (as on Aviasales) and the hotel per night');
 delete env.TRAVELPAYOUTS_TOKEN; delete env.TRAVELPAYOUTS_MARKER;
 assert(!sent.slice(-6).some((x) => (x.p.text || '').includes('Bot → agent')), 'nothing is mirrored to an agent');
-assert(lastText().includes('ss=Levent%2C+Istanbul'), 'hotel search uses the area he wants, in English');
+assert(lastText().includes('ss=Sisli+Park%2C+Istanbul&amp;checkin=2026-12-12&amp;checkout=2026-12-15'), 'hotel search: the hotel by name, in its city, with the dates');
 await tap(`ch:${sTrip}:0`); show('search mode: choose');
 assert(status().status === 'chosen' && lastKb().includes('"url":"https://www.aviasales.uz/search/TAS1212IST15121') && lastKb().includes(`bk:${sTrip}`), 'choosing shows booking links (Aviasales first) and "I booked it"');
 n0 = sent.length;
@@ -671,6 +671,24 @@ assert(nearFares.length === 1 && nearFares[0].depart === '2026-11-12T07:40', 'ex
   ticketDepart = '2027-01-10T08:00'; ticketBack = '2027-01-14T19:00';
   await update({ message: { message_id: ++msgId, from: owner, chat: { id: 111, type: 'private' }, caption: 'chiptam', document: { file_id: 'TICKET9', file_name: 't9.pdf', mime_type: 'application/pdf', file_size: 30000 } } });
   assert(sqlite.prepare('SELECT flight_at FROM trips WHERE id = ?').get(ob).flight_at === obRow.flight_at && status().id !== ob && status().status === 'booked', "a ticket that matches none of his trips does not change the booked one");
+  env.AGENT_MODE = 'mock';
+}
+// a new request replaces an unfinished one, so a late search for the old one cannot appear under it
+{
+  env.AGENT_MODE = 'search';
+  sqlite.prepare(`UPDATE trips SET status = 'done' WHERE status IN ('collecting', 'draft', 'sent', 'offers', 'chosen', 'booked')`).run();
+  await say('Istanbul again please, same as before, 23 kg'); const oldT = status().id;
+  await tap(`ap:${oldT}`); await cron();
+  await say('Moskvaga bir tomonga, 20-noyabr');
+  assert(sqlite.prepare('SELECT status FROM trips WHERE id = ?').get(oldT).status === 'cancelled' && status().id !== oldT, 'a new trip request replaces the unfinished one (its search stops)');
+  // a search that ended with no result and no message: the watchdog offers a retry
+  const lostT = status().id;
+  sqlite.prepare(`UPDATE trips SET status = 'sent', sent_at = ?, sla_reminded = 0 WHERE id = ?`).run(Date.now() - 7 * 60e3, lostT);
+  sqlite.prepare('UPDATE jobs SET done_at = 1 WHERE trip_id = ? AND done_at IS NULL').run(lostT);
+  await cron();
+  assert(lastKb().includes(`sr:${lostT}`) && lastText().includes('topa olmadim'), 'a search lost without a message: apology with a retry button');
+  n0 = sent.length; await cron();
+  assert(!sent.slice(n0).some((x) => (x.p.text || '').includes('topa olmadim')), 'the lost-search apology is sent once');
   env.AGENT_MODE = 'mock';
 }
 // the same flight three times (one fare that day) is shown once, with the search's note

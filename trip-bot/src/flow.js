@@ -137,13 +137,13 @@ const priceSplit = (L, o) => (o.flight_price == null ? ''
 // Booking links of an option: Aviasales (that fare, or a search for its dates), the airline's page, the hotel, Booking.com.
 // An Aviasales fare link opens that fare for one adult; for 2+ travelers the search link (with the passenger count) is used.
 const isAviasales = (u) => { try { return /(^|\.)aviasales\.(uz|ru|com|kz|kg|by|tj)$/.test(new URL(u).hostname); } catch { return false; } };
+// Only links that always open: the Aviasales fare (a real link from the API) or an Aviasales search, and a
+// Booking.com search for that hotel by name. Airline and hotel page URLs written by Gemini are often made up (404),
+// so they are not shown.
 function optionLinks(env, L, t, o) {
   const flight = safeUrl(o.flight_link);
   const avia = flight && isAviasales(flight) && (Number(t.fields.travelers) || 1) <= 1 ? flight : aviasalesUrl(env, t.fields, o);
-  return [
-    ['Aviasales', avia], [L.linkAirline, flight && !isAviasales(flight) ? deepLink(flight) : null],
-    [L.linkHotel, deepLink(safeUrl(o.hotel_link))], ['Booking.com', o.hotel ? bookingComUrl(t.fields, o) : null],
-  ].filter(([, u]) => u);
+  return [['Aviasales', avia], ['Booking.com', o.hotel ? bookingComUrl(t.fields, o, o.hotel) : null]].filter(([, u]) => u);
 }
 // A site's home page ("https://www.csair.com", ".../en/") opens nothing useful: only links to a specific page are shown.
 // Home-page paths: "/", "/en", "/en-int/", "/uz/ru/", "/index.html", "/home"; tracking-only queries (utm_*) do not count.
@@ -479,7 +479,17 @@ function offersMessage(env, t, L, lang) {
 // history: recent conversation; heardText: transcript of a voice note (logged, not echoed back).
 async function buildRequest(env, uid, chat, t, text, media, L, lang, heardText = null, history = '') {
   L = modeL(env, L);
-  if (!t) t = await createTrip(env, uid);
+  if (!t) {
+    t = await createTrip(env, uid);
+    // A new request replaces his older ones that are not booked or being booked: their searches stop, and their
+    // late results can no longer arrive under the new request.
+    for (const r of await all(env, `SELECT id FROM trips WHERE owner_id = ? AND id <> ? AND status IN ('collecting', 'draft', 'sent', 'offers')`, uid, t.id)) {
+      const old = await getTrip(env, r.id);
+      try { await setStatus(env, old, 'cancelled', 'bot'); } catch (e) { if (!e.stale) throw e; continue; }
+      await run(env, 'UPDATE jobs SET done_at = ? WHERE trip_id = ? AND done_at IS NULL', Date.now(), old.id);
+      await logEvent(env, 'bot', 'superseded', old.id, t.code);
+    }
+  }
   let r;
   try { r = await whileTyping(env, chat, () => parseRequest(env, t.fields, text, media, lang, history)); }
   catch (e) { await reportError(env, e, 'parseRequest'); return send(env, chat, L.readFail); }
@@ -1108,6 +1118,16 @@ export async function runChecks(env) {
     await logEvent(env, 'cron', 'agent_late', t.id);
     await toAgent(env, t, AL(env).sla(t.code, fmtLocal(env, t.sent_at, agentLang(env))), 'sla');
     await send(env, t.owner_id, L.agentLate(t.code));
+  }
+
+  // Search mode: a search that ended without results or a message (its cron run was cut off) is never silent:
+  // after 6 minutes with no search queued, he gets the apology with a retry button.
+  for (const r of isSearch(env) ? await all(env, `SELECT id, owner_id FROM trips t WHERE status = 'sent' AND sla_reminded = 0 AND sent_at <= ?
+      AND NOT EXISTS (SELECT 1 FROM jobs j WHERE j.trip_id = t.id AND j.done_at IS NULL)`, now - 6 * MIN) : []) {
+    if (!(await claim(env, 'UPDATE trips SET sla_reminded = 1 WHERE id = ? AND sla_reminded = 0', r.id))) continue;
+    const { L } = await strings(env, r.owner_id);
+    await logEvent(env, 'cron', 'search_lost', r.id);
+    await send(env, r.owner_id, L.searchFailed, kb([[[L.btnRetrySearch, `sr:${r.id}`]]])).catch((e) => reportError(env, e, 'search watchdog'));
   }
 
   for (const r of await all(env, `SELECT id FROM trips WHERE status = 'offers' AND nudged_offers = 0 AND offers_at <= ?`, now - nudge)) {
