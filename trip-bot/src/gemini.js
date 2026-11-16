@@ -76,7 +76,7 @@ const REQUEST_SCHEMA = {
     travelers: { type: 'INTEGER', nullable: true }, traveler_names: S(), flight_pref: S(),
     one_way: { type: 'BOOLEAN', nullable: true }, date_flex: S(), window_from: S(), window_to: S(),
     origin_iata: S(), destination_iata: S(),
-    destination_kind: { type: 'STRING', enum: ['city', 'country'], nullable: true },
+    destination_kind: { type: 'STRING', enum: ['city', 'country'], nullable: true }, destination_unknown: { type: 'BOOLEAN', nullable: true },
     city_options: { type: 'ARRAY', nullable: true, items: { type: 'OBJECT', properties: { name: { type: 'STRING' }, iata: { type: 'STRING' } }, required: ['name', 'iata'] } },
     wants_search: { type: 'BOOLEAN', nullable: true },
     baggage: S(), hotel: S(), budget: S(), notes: S(),
@@ -103,6 +103,7 @@ Return the complete, updated trip request as JSON:
 - window_from, window_to: when date_flex is set, the earliest departure and latest return dates of that window, "YYYY-MM-DD" ("noyabr oʻrtalari" = about the 10th to the 20th); else null.
 - origin_iata, destination_iata: the 3-letter IATA city code of the origin and destination (TAS, IST, DXB, CAN, MOW...); null if no destination yet or it is a country.
 - destination_kind: "country" if he named only a country or a big region ("Xitoy", "Turkiya", "Yevropa", "Китай") and no city; "city" otherwise.
+- destination_unknown: true only if the destination he named is not a real place you recognise (a typo you cannot resolve, a made-up word, like "Idin"); then copy it as he wrote it into destination and leave destination_iata null. If it is a misspelling of a real place ("Guanjov" = Guangzhou), use the real place and false. Else null.
 - city_options: only when destination_kind is "country" (or a region of one): the 4 cities there with an airport that people from Tashkent most often fly to, most popular first, each { name (in ${S.name}), iata (3-letter IATA city code) }; else null. He may also name any other city.
 - wants_search: true if in this message he asks to search now or see the flights ("reyslar roʻyxatini ber", "qidir", "variantlarni koʻrsat", "shunday yubor", "найди билеты"); else null.
 - one_way: true if he wants a one-way ticket ("bir tomonga", "в одну сторону", "qaytish kerak emas"); then date_to is null. Otherwise null.

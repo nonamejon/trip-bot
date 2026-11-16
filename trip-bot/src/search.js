@@ -105,9 +105,8 @@ export async function runSearch(env, job) {
       if (!res.offers.length) return searchNotFound(env, t);
       const r = res.offers[res.recommended];
       const wantsHotel = !t.fields.one_way && !/mehmonxona kerak emas|отель не нужен|no hotel/i.test(`${t.fields.hotel || ''} ${t.fields.notes || ''}`);
-      const checkin = r.arrival ? r.arrival.slice(0, 10) : r.date_out;
       let hotels = null;
-      if (wantsHotel && r.date_back && r.date_back > checkin) hotels = { checkin, checkout: r.date_back, list: await suggestHotels(env, t.fields, checkin, r.date_back) };
+      if (wantsHotel) hotels = { checkin: r.checkin, checkout: r.checkout, assumed: r.stay_assumed, list: await suggestHotels(env, t.fields, r.checkin, r.checkout) };
       t.fields.price_source = 'aviasales';
       return showSearchResults(env, t, res, hotels, wantsHotel);
     }

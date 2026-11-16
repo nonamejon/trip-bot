@@ -563,6 +563,9 @@ Object.assign(O.uz, {
   hotelNeedsDates: '🏨 Qaytish sanasini yozsangiz, shu kunlar uchun mehmonxonalarni ham topib beraman.',
   noFaresFound: (route, d) => `Kechirasiz, Aviasales’da ${route} yoʻnalishi boʻyicha ${d} uchun saqlangan narxlar topilmadi. Taxminiy maʼlumot bermaslik uchun reyslarni oʻzim toʻqib chiqarmadim.\n\nQuyidagi havolada Aviasales jonli qidiruvi ochiladi, yoki sanani oʻzgartirib qayta qidirishim mumkin.`,
   btnLiveSearch: '🔎 Aviasales’da jonli qidiruv', btnChangeDates: '✏️ Sanani oʻzgartirish',
+  addedNearNote: (d, n) => `${d} uchun Aviasales’da ${n} ta reys topildi; yaqin kunlardagi reyslar ham qoʻshildi — sanasiga eʼtibor bering.`,
+  hotelOneNight: '<i>Qaytish sanasi hali yoʻq, shuning uchun 1 kecha koʻrsatildi. Qaytish sanasini yozsangiz, aniq kunlarga moslayman.</i>',
+  unknownPlace: (d) => `«${d}» degan shaharni topa olmadim — shahar nomini aniqroq yozing`,
   forPeople: (n) => `${n} kishi uchun`,
 });
 Object.assign(O.ru, {
@@ -576,6 +579,9 @@ Object.assign(O.ru, {
   hotelNeedsDates: '🏨 Напишите дату возвращения — подберу и отели на эти дни.',
   noFaresFound: (route, d) => `Извините, на Aviasales нет сохранённых цен по направлению ${route} на ${d}. Чтобы не давать недостоверных данных, я не стал придумывать рейсы.\n\nПо ссылке ниже откроется живой поиск Aviasales, или я могу поискать на другие даты.`,
   btnLiveSearch: '🔎 Живой поиск на Aviasales', btnChangeDates: '✏️ Изменить даты',
+  addedNearNote: (d, n) => `На ${d} на Aviasales нашлось рейсов: ${n}; добавлены рейсы на соседние дни — обратите внимание на дату.`,
+  hotelOneNight: '<i>Даты возвращения пока нет, поэтому показана 1 ночь. Напишите дату возвращения — подстрою под точные дни.</i>',
+  unknownPlace: (d) => `не нашёл город «${d}» — напишите название точнее`,
   forPeople: (n) => `на ${n} чел.`,
 });
 O.ru.cityHint = 'Выберите ниже или нажмите «Другой город» и напишите любой.';

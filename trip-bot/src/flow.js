@@ -24,9 +24,12 @@ import { secMenu, addEvent, addReminder, showAgenda, listReminders, doTranslate,
 // Only "where" and "roughly when" block a request; the rest is asked as optional and he can send without it.
 // Baggage is never asked: the agent states the allowance of each fare.
 // A country ("Xitoy") is not enough to search flights: the city is asked, with buttons for the main ones.
-const hardMissing = (f) => [!f.destination && 'destination', f.destination && f.destination_kind === 'country' && 'city', !f.date_from && !f.date_flex && 'date_from'].filter(Boolean);
+const hardMissing = (f) => [!f.destination && 'destination', f.destination && f.destination_kind === 'country' && 'city',
+  f.destination && f.destination_unknown && 'place', !f.date_from && !f.date_flex && 'date_from'].filter(Boolean);
+// The question for each missing item; an unknown place names what he wrote.
+const askLabel = (L, f, k) => (k === 'place' ? L.unknownPlace(esc(f.destination)) : L.field[k]);
 const softMissing = (f) => [!f.travelers && 'travelers', f.date_from && !f.date_to && !f.one_way && !f.date_flex && 'date_to'].filter(Boolean);
-const FIELD_KEYS = ['origin', 'destination', 'destination_kind', 'city_options', 'date_from', 'date_to', 'one_way', 'date_flex', 'window_from', 'window_to', 'origin_iata', 'destination_iata', 'travelers', 'traveler_names', 'flight_pref', 'baggage', 'hotel', 'budget', 'notes'];
+const FIELD_KEYS = ['origin', 'destination', 'destination_kind', 'destination_unknown', 'city_options', 'date_from', 'date_to', 'one_way', 'date_flex', 'window_from', 'window_to', 'origin_iata', 'destination_iata', 'travelers', 'traveler_names', 'flight_pref', 'baggage', 'hotel', 'budget', 'notes'];
 // "12-noyabr – 15-noyabr (3 kecha)", "15-noyabr (bir tomonga)", plus the flexibility if any
 const datesLine = (S, f, lang, Q = '?') => {
   if (f.date_flex && !f.date_from) return `${f.date_flex} (${S.flexible})`; // no invented exact date
@@ -146,6 +149,7 @@ function compareRealText(env, L, lang, t, out) {
     const span = { date_out: h.checkin, date_back: h.checkout };
     const lines = (h.list || []).map((x) => `• <a href="${href(bookingComUrl(f, span, x.name))}">${esc(x.name)}</a>${x.stars ? ` ${x.stars}★` : ''}${x.area ? ` · ${esc(x.area)}` : ''}${x.price_night ? ` · ~${Math.round(x.price_night)} USD${L.perNight}` : ''}`);
     out.push('', L.hotelsTitle(`${dshort(h.checkin, lang)} – ${dshort(h.checkout, lang)}`), ...lines, `🔗 <a href="${href(bookingComUrl(f, span))}">${L.hotelsAll}</a>`);
+    if (h.assumed) out.push(L.hotelOneNight);
   } else if (f.hotel_hint) out.push('', L.hotelNeedsDates);
   out.push('', `<i>${L.pricesAviasales} ${L.fareTerms}</i>`);
   return out.filter((x) => x !== null).join('\n');
@@ -165,7 +169,7 @@ const isAviasales = (u) => { try { return /(^|\.)aviasales\.(uz|ru|com|kz|kg|by|
 // so they are not shown.
 function optionLinks(env, L, t, o) {
   if (o.src === 'aviasales') { // Aviasales for exactly this option's dates; Booking.com only when the stay dates are known
-    const stay = o.date_back ? { date_out: (o.arrival || o.date_out).slice(0, 10), date_back: o.date_back } : null;
+    const stay = o.checkin ? { date_out: o.checkin, date_back: o.checkout } : null;
     return [['Aviasales', o.flight_link], ['Booking.com', stay ? bookingComUrl(t.fields, stay, o.hotel || null) : null]].filter(([, u]) => u);
   }
   const flight = safeUrl(o.flight_link);
@@ -534,6 +538,8 @@ async function buildRequest(env, uid, chat, t, text, media, L, lang, heardText =
   const before = { ...t.fields };
   for (const k of FIELD_KEYS) if (r[k] != null && r[k] !== '') t.fields[k] = r[k];
   if (r.date_to && r.one_way !== true) t.fields.one_way = false; // he gave a return date: not one-way any more
+  if (r.destination && !r.destination_unknown) delete t.fields.destination_unknown; // a real place now
+  if (r.destination && r.destination !== before.destination && !r.destination_kind) t.fields.destination_kind = 'city'; // a new place named without a kind
   if (r.date_from && r.date_from !== before.date_from && !r.date_flex) { delete t.fields.date_flex; delete t.fields.window_from; delete t.fields.window_to; }
   for (const k of ['date_from', 'date_to', 'window_from', 'window_to']) if (t.fields[k] && !isDate(t.fields[k])) delete t.fields[k];
   for (const k of ['origin_iata', 'destination_iata']) if (t.fields[k] && !/^[A-Z]{3}$/.test(t.fields[k])) delete t.fields[k];
@@ -559,7 +565,7 @@ const cityRows = (t, L) => {
 // with the city buttons, instead of a generic answer.
 function reaskPending(env, chat, t, L, lead) {
   const hard = hardMissing(t.fields);
-  const q = `<b>${L.askMissing(hard.map((k) => L.field[k]).join(', '))}</b>${hard.includes('city') ? '\n' + L.cityHint : ''}`;
+  const q = `<b>${L.askMissing(hard.map((k) => askLabel(L, t.fields, k)).join(', '))}</b>${hard.includes('city') ? '\n' + L.cityHint : ''}`;
   return send(env, chat, `${lead ? lead + '\n\n' : ''}${q}`, kb([...cityRows(t, L), [[L.btnCancel, `cx:${t.id}`]]]));
 }
 
@@ -570,7 +576,7 @@ async function showRequest(env, chat, t, L, lang, autoSearch = false) {
   if (hard.length) {
     // Where or when is missing: show the card and ask for it (and the optional items) in one message.
     if (t.status !== 'collecting') await setStatus(env, t, 'collecting', 'owner'); else await saveTrip(env, t);
-    const ask = [`<b>${L.askMissing(hard.map((k) => L.field[k]).join(', '))}</b>`, hard.includes('city') ? L.cityHint : '', soft.length ? L.askOptional(soft.map((k) => L.field[k]).join(', ')) : '', hint].filter(Boolean).join('\n');
+    const ask = [`<b>${L.askMissing(hard.map((k) => askLabel(L, t.fields, k)).join(', '))}</b>`, hard.includes('city') ? L.cityHint : '', soft.length ? L.askOptional(soft.map((k) => L.field[k]).join(', ')) : '', hint].filter(Boolean).join('\n');
     return send(env, chat, `${draftText(L, lang, t)}\n\n${ask}`, kb([...cityRows(t, L), [[L.btnCancel, `cx:${t.id}`]]]));
   }
   // Enough to send. Optional gaps are asked, but the approve button is always there.
@@ -751,7 +757,7 @@ export async function handleCallback(env, cq) {
         if (!c || !['collecting', 'draft'].includes(t.status)) return send(env, chat, L.staleBtn);
         await dropKeyboard();
         Object.assign(t.fields, { destination: c.name, destination_kind: 'city', destination_iata: /^[A-Z]{3}$/.test(c.iata) ? c.iata : null });
-        delete t.fields.city_options; delete t.fields.destination_en; delete t.fields.area_en;
+        delete t.fields.city_options; delete t.fields.destination_en; delete t.fields.area_en; delete t.fields.destination_unknown;
         await logEvent(env, 'owner', 'city_chosen', t.id, c.name);
         return showRequest(env, chat, t, modeL(env, L), lang);
       }

@@ -86,7 +86,9 @@ globalThis.fetch = async (url, init = {}) => {
       geminiCalls.push('parseRequest' + (hasMedia ? '+audio' : ''));
       lastParsePrompt = prompt;
       const nm = (prompt.match(/His new message: "{3}([\s\S]*?)"{3}/) || [])[1] || '';
-      out = /Xitoy/.test(nm)
+      out = /Idinga/.test(nm) ? { destination: 'Idin', destination_unknown: true, date_from: localISO(3) }
+        : /Guanjovga/.test(nm) ? { destination: 'Guanchjou', destination_iata: 'CAN', date_from: localISO(3) }
+        : /Xitoy/.test(nm)
         ? { destination: 'Xitoy', destination_kind: 'country', city_options: [{ name: 'Pekin', iata: 'BJS' }, { name: 'Shanxay', iata: 'SHA' }, { name: 'Guanchjou', iata: 'CAN' }], date_from: localISO(1), travelers: 1 }
         : /roʻyxatini ber/.test(nm) ? { wants_search: true }
         : /arzon/.test(nm)
@@ -127,7 +129,8 @@ globalThis.fetch = async (url, init = {}) => {
     return new Response(JSON.stringify({ success: true, data: [
       { origin: 'TAS', destination: 'IST', price: 412, airline: 'HY', flight_number: '271', departure_at: '2026-11-12T07:40:00+05:00', return_at: '2026-11-15T12:30:00+03:00', transfers: 0, return_transfers: 0, duration_to: 320, link: '/search/TAS1211IST15111?t=HY1' },
       { origin: 'TAS', destination: 'IST', price: 380, airline: 'C6', flight_number: '301', departure_at: '2026-11-25T05:05:00+05:00', return_at: '2026-11-28T10:00:00+03:00', transfers: 0, return_transfers: 0, duration_to: 335, link: '/search/TAS2511IST28111?t=C61' },
-    ].filter((d) => dep.length === 7 || d.departure_at.startsWith(dep)) }));
+      { origin: 'TAS', destination: 'IST', price: 450, airline: 'TK', flight_number: '371', departure_at: '2026-11-14T09:15:00+05:00', return_at: '2026-11-17T21:05:00+03:00', transfers: 1, return_transfers: 0, duration_to: 400, link: '/search/TAS1411IST17111?t=TK1' },
+    ].filter((d) => dep.length === 7 || d.departure_at.startsWith(dep)).map((d) => (lastFaresQuery.get('one_way') === 'true' ? { ...d, return_at: null } : d)) }));
   }
   if (url.startsWith('https://api.telegram.org/file/')) return new Response(new Uint8Array([79, 103, 103, 83, 0, 1, 2, 3]));
   if (url.startsWith('https://api.telegram.org/bot')) {
@@ -526,10 +529,12 @@ assert(lastKb().includes(`bl:${sTrip}`) && !lastKb().includes('aw:'), 'card: boo
   let r = await realTrip('2026-11-12', '2026-11-15'); show('real fares: exact date');
   const ro = JSON.parse(sqlite.prepare('SELECT offers FROM trips WHERE id = ?').get(r.id).offers);
   assert(status().status === 'offers' && !r.gem.some((g) => g.startsWith('search')) && r.gem.includes('hotels'), 'real fares: flights built in code (Gemini only suggests hotels)');
-  assert(ro.length === 1 && ro[0].airline === 'Uzbekistan Airways · HY 271' && lastText().includes('12-noyabr, 07:40') && lastText().includes('toʻgʻri reys') && lastText().includes('412 USD'), 'the option shows the real flight, its date and time, stops and price');
+  assert(ro.length === 2 && ro[0].airline === 'Uzbekistan Airways · HY 271' && lastText().includes('12-noyabr, 07:40') && lastText().includes('toʻgʻri reys') && lastText().includes('412 USD'), 'the option shows the real flight, its date and time, stops and price');
+  assert(ro[1].airline === 'Turkish Airlines · TK 371' && lastText().includes('14-noyabr (+2), 09:15') && lastText().includes('17-noyabr (+2)') && lastText().includes('yaqin kunlardagi reyslar ham qoʻshildi'), 'one flight on his day: nearby days added, each date marked');
   assert(lastText().includes('aviasales.uz/search/TAS1211IST15111?marker=12345') && !lastText().includes('Bagaj:') && !lastText().includes('Bekor qilish:'), 'Aviasales link for exactly those dates; no guessed baggage or refund terms');
   assert(lastText().includes('ss=Grand+Levent%2C+Istanbul&amp;checkin=2026-11-12&amp;checkout=2026-11-15') && lastText().includes('</a> 5★ · Levent · ~180 USD/kecha') && lastText().includes('taxminiy'), 'hotels: separate list, Booking.com by name with the stay dates, prices marked approximate');
-  assert(lastText().includes('Boshqalari ham boʻlishi mumkin'), 'only one flight that day: said so, not padded');
+  r = await realTrip('2026-11-12', null); show('real fares: no return date');
+  assert(lastText().includes('12-noyabr – 13-noyabr') && lastText().includes('1 kecha koʻrsatildi') && lastText().includes('checkin=2026-11-12&amp;checkout=2026-11-13'), 'no return date: hotels and Booking.com for the arrival night, and it says so');
   r = await realTrip('2026-11-13', '2026-11-16'); show('real fares: nearest dates');
   assert(lastText().includes('eng yaqin sanalardagi') && lastText().includes('12-noyabr (-1), 07:40'), 'nothing on his date: the nearest dates, clearly labelled');
   r = await realTrip('2026-12-01', '2026-12-05'); show('real fares: nothing');
@@ -594,6 +599,13 @@ assert(!sqlite.prepare('SELECT 1 FROM members WHERE telegram_id = 999').get(), '
 n0 = sent.length;
 await update({ message: { message_id: ++msgId, from: { id: 999, is_bot: false }, chat: { id: 999, type: 'private' }, text: 'salom' } });
 assert(sent.slice(n0).some((x) => x.p.chat_id === 999 && x.p.text.includes('shaxsiy yordamchi')), 'after removal they are a stranger again');
+
+// a place that does not exist is questioned
+await say('Idinga ketmoqchimana'); show('an unknown place');
+assert(status().status === 'collecting' && lastText().includes('«Idin» degan shaharni topa olmadim'), 'a place that does not exist is questioned, not accepted');
+await say('Guanjovga');
+assert(status().status === 'draft' && lastText().includes('Guanchjou') && !lastText().includes('topa olmadim'), 'the corrected city clears the question');
+await say('/cancel'); await tap(`cy:${status().id}`);
 
 // a country instead of a city (real case: "ertaga Xitoyga"): city buttons; "show the flights" starts the search
 await say('ertaga Xitoyga uchishim kerak, taqdimotga'); show('country instead of a city');
@@ -663,10 +675,10 @@ assert(!sqlite.prepare('SELECT 1 FROM invites').get(), 'admins cannot invite');
 assert(aviasalesUrl({}, { origin_iata: 'TAS', destination_iata: 'IST', date_from: '2026-11-12', date_to: '2026-11-15', travelers: 1 }) === 'https://www.aviasales.uz/search/TAS1211IST15111', 'Aviasales search link format');
 assert(aviasalesUrl({}, { destination_iata: 'DXB', date_from: '2026-12-01', one_way: true, travelers: 2 }) === 'https://www.aviasales.uz/search/TAS0112DXB2', 'Aviasales one-way link for 2 adults');
 const flexFares = await fetchFares({ TRAVELPAYOUTS_TOKEN: 't' }, { origin_iata: 'TAS', destination_iata: 'IST', date_flex: 'noyabr oʻrtalari', window_from: '2026-11-10', window_to: '2026-11-20' });
-assert(lastFaresQuery.get('departure_at') === '2026-11' && flexFares.length === 1 && flexFares[0].price === 412 && flexFares[0].link === 'https://www.aviasales.uz/search/TAS1211IST15111?t=HY1', 'flexible dates: month search, kept to his window');
+assert(lastFaresQuery.get('departure_at') === '2026-11' && flexFares.length === 2 && flexFares[0].price === 412 && flexFares[0].link === 'https://www.aviasales.uz/search/TAS1211IST15111?t=HY1', 'flexible dates: month search, kept to his window');
 assert((await fetchFares({}, { destination_iata: 'IST', date_from: '2026-11-12' })).length === 0, 'no token: no fare lookup');
 const nearFares = await fetchFares({ TRAVELPAYOUTS_TOKEN: 't' }, { origin_iata: 'TAS', destination_iata: 'IST', date_from: '2026-11-13', date_to: '2026-11-16' });
-assert(nearFares.length === 1 && nearFares[0].depart === '2026-11-12T07:40', 'exact dates: fares for those dates or the closest ones (±3 days)');
+assert(nearFares.length === 2 && nearFares[0].depart === '2026-11-12T07:40' && nearFares[1].depart === '2026-11-14T09:15', 'exact dates: fares for those dates or the closest ones (±3 days)');
 
 // ---------- audit fixes: races, stale buttons, outdated results ----------
 {

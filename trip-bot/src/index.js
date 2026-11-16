@@ -52,7 +52,7 @@ export default {
       const fares = await fetchFares(env, f);
       const res = buildOptions(env, f, fares, { L: O[lang], lang, dshort });
       return Response.json({ fares: fares.length, note: res.note, recommended: res.recommended, why: res.why,
-        options: res.offers.map((o) => ({ airline: o.airline, stops: o.stops, out: o.outbound, back: o.return, price: o.total_price, arrival: o.arrival, link: o.flight_link })),
+        options: res.offers.map((o) => ({ airline: o.airline, stops: o.stops, out: o.outbound, back: o.return, price: o.total_price, stay: `${o.checkin} → ${o.checkout}${o.stay_assumed ? " (1 night assumed)" : ""}`, link: o.flight_link })),
         raw: fares.slice(0, 12).map((x) => `${x.flight_number} ${x.depart}${x.depart_offset || ''} back ${x.back || '-'} | ${x.transfers} stops | $${x.price}`) });
     }
 
